@@ -500,6 +500,13 @@
 				<vflag name="-framework" value="Carbon" />
 				<vflag name="-framework" value="AppKit" />
 				<vflag name="-framework" value="OpenAL" />
+				<vflag name="-framework" value="AVFoundation" />
+				<vflag name="-framework" value="CoreMedia" />
+				<vflag name="-framework" value="CoreHaptics" />
+				<vflag name="-framework" value="GameController" />
+				<vflag name="-framework" value="Metal" />
+				<vflag name="-framework" value="QuartzCore" />
+				<vflag name="-framework" value="UniformTypeIdentifiers" />
 
 				<lib name="/opt/local/lib/libgc.a" if="LIME_NEKO" />
 				<lib name="-lm" if="LIME_NEKO" />
@@ -566,6 +573,12 @@
 				<vflag name="-framework" value="OpenAL" />
 				<vflag name="-framework" value="CoreMotion" />
 				<vflag name="-framework" value="CoreText" />
+				<vflag name="-framework" value="AVFoundation" />
+				<vflag name="-framework" value="CoreMedia" />
+				<vflag name="-framework" value="CoreHaptics" />
+				<vflag name="-framework" value="GameController" />
+				<vflag name="-framework" value="Metal" />
+				<vflag name="-framework" value="QuartzCore" />
 				<!-- <vflag name="-framework" value="CoreBluetooth" /> -->
 
 				<lib name="-ldl" />
