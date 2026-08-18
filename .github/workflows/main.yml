@@ -32,21 +32,18 @@ jobs:
       - uses: krdlab/setup-haxe@d93667502be3b4f31a94a3308a74388f2e178a8d # v2.1.0
         with:
           haxe-version: 4.2.5
+          neko-version: latest
 
       - name: Install Haxe deps
         run: |
           haxelib install hxcpp --quiet
-          haxelib install format --quiet
-          haxelib install hxp --quiet
-
-      - name: Rebuild Lime tools
-        run: |
           haxelib dev lime $GITHUB_WORKSPACE
-          haxelib run lime rebuild tools -nocolor -verbose -nocffi
-          haxelib run lime setup -alias -y -nocffi
+
+      - name: Verify Lime tools
+        run: haxelib run lime --version
 
       - name: Rebuild Lime Linux ndll (SDL3)
-        run: lime rebuild linux -64 -release -nocolor -verbose -nocffi -Dlime-sdl3
+        run: haxelib run lime rebuild linux -64 -release -nocolor -verbose -nocffi -Dlime-sdl3
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -65,21 +62,18 @@ jobs:
       - uses: krdlab/setup-haxe@d93667502be3b4f31a94a3308a74388f2e178a8d # v2.1.0
         with:
           haxe-version: 4.2.5
+          neko-version: latest
 
       - name: Install Haxe deps
         run: |
           haxelib install hxcpp --quiet
-          haxelib install format --quiet
-          haxelib install hxp --quiet
-
-      - name: Rebuild Lime tools
-        run: |
           haxelib dev lime $Env:GITHUB_WORKSPACE
-          haxelib run lime rebuild tools -nocolor -verbose -nocffi
-          haxelib run lime setup -alias -y -nocffi
+
+      - name: Verify Lime tools
+        run: haxelib run lime --version
 
       - name: Rebuild Lime Windows ndll (SDL3)
-        run: lime rebuild windows -64 -release -nocolor -verbose -nocffi -Dlime-sdl3
+        run: haxelib run lime rebuild windows -64 -release -nocolor -verbose -nocffi -Dlime-sdl3
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -98,21 +92,18 @@ jobs:
       - uses: krdlab/setup-haxe@d93667502be3b4f31a94a3308a74388f2e178a8d # v2.1.0
         with:
           haxe-version: 4.2.5
+          neko-version: latest
 
       - name: Install Haxe deps
         run: |
           haxelib install hxcpp --quiet
-          haxelib install format --quiet
-          haxelib install hxp --quiet
-
-      - name: Rebuild Lime tools
-        run: |
           haxelib dev lime $GITHUB_WORKSPACE
-          haxelib run lime rebuild tools -nocolor -verbose -nocffi
-          haxelib run lime setup -alias -y -nocffi
+
+      - name: Verify Lime tools
+        run: haxelib run lime --version
 
       - name: Rebuild Lime macOS ndll (SDL3)
-        run: lime rebuild mac -64 -release -nocolor -verbose -nocffi -Dlime-sdl3
+        run: haxelib run lime rebuild mac -64 -release -nocolor -verbose -nocffi -Dlime-sdl3
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -141,29 +132,26 @@ jobs:
       - uses: krdlab/setup-haxe@d93667502be3b4f31a94a3308a74388f2e178a8d # v2.1.0
         with:
           haxe-version: 4.2.5
+          neko-version: latest
 
       - name: Install Haxe deps
         run: |
           haxelib install hxcpp --quiet
-          haxelib install format --quiet
-          haxelib install hxp --quiet
-
-      - name: Rebuild Lime tools
-        run: |
           haxelib dev lime $GITHUB_WORKSPACE
-          haxelib run lime rebuild tools -nocolor -verbose -nocffi
-          haxelib run lime setup -alias -y -nocffi
+
+      - name: Verify Lime tools
+        run: haxelib run lime --version
 
       - name: Configure Android
         run: |
-          lime config ANDROID_SDK $ANDROID_HOME
-          lime config ANDROID_NDK_ROOT ${{ steps.setup-ndk.outputs.ndk-path }}
-          lime config JAVA_HOME $JAVA_HOME
-          lime config ANDROID_SETUP true
-          lime config
+          haxelib run lime config ANDROID_SDK $ANDROID_HOME
+          haxelib run lime config ANDROID_NDK_ROOT ${{ steps.setup-ndk.outputs.ndk-path }}
+          haxelib run lime config JAVA_HOME $JAVA_HOME
+          haxelib run lime config ANDROID_SETUP true
+          haxelib run lime config
 
       - name: Rebuild Lime Android ndll (SDL3)
-        run: lime rebuild android -release -nocolor -verbose -nocffi -Dlime-sdl3
+        run: haxelib run lime rebuild android -release -nocolor -verbose -nocffi -Dlime-sdl3
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -183,18 +171,15 @@ jobs:
       - uses: krdlab/setup-haxe@d93667502be3b4f31a94a3308a74388f2e178a8d # v2.1.0
         with:
           haxe-version: 4.2.5
+          neko-version: latest
 
       - name: Install Haxe deps
         run: |
           haxelib install hxcpp --quiet
-          haxelib install format --quiet
-          haxelib install hxp --quiet
-
-      - name: Rebuild Lime tools
-        run: |
           haxelib dev lime $GITHUB_WORKSPACE
-          haxelib run lime rebuild tools -nocolor -verbose -nocffi
-          haxelib run lime setup -alias -y -nocffi
+
+      - name: Verify Lime tools
+        run: haxelib run lime --version
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -203,7 +188,7 @@ jobs:
 
       # iOS 引擎不使用 SDL3, 重建 SDL2 版 ndll
       - name: Rebuild Lime iOS ndll
-        run: lime rebuild ios -arm64 -release -nocolor -verbose -nocffi
+        run: haxelib run lime rebuild ios -arm64 -release -nocolor -verbose -nocffi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
