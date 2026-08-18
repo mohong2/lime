@@ -964,15 +964,13 @@ namespace lime {
 
 		if (fullscreen) {
 
-			if (displayModeSet) {
-
-				SDL_SetWindowFullscreen (sdlWindow, true);
-
-			} else {
-
-				SDL_SetWindowFullscreen (sdlWindow, true);
-
+			bool borderless = (SDL_GetWindowFlags (sdlWindow) & SDL_WINDOW_BORDERLESS) != 0;
+			if (borderless) {
+				SDL_SetWindowFullscreenMode (sdlWindow, NULL);
+			} else if (displayModeSet) {
 			}
+
+			SDL_SetWindowFullscreen (sdlWindow, true);
 
 		} else {
 
