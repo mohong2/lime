@@ -31,8 +31,11 @@ jobs:
 
       - uses: krdlab/setup-haxe@d93667502be3b4f31a94a3308a74388f2e178a8d # v2.1.0
         with:
+          # 必须用 neko 2.3: 2.4+ 的 neko.Lib.load 在 lime.ndll 缺失时直接抛
+          # "Failed to load library" (optional-cffi 降级失效), 2.3 返回 null 走降级,
+          # 与本机工具链一致 (fork 的 run.n 不含 lime.ndll, 依赖降级模式运行)
           haxe-version: 4.2.5
-          neko-version: latest
+          neko-version: 2.3.0
 
       - name: Install Haxe deps
         run: |
@@ -61,8 +64,11 @@ jobs:
 
       - uses: krdlab/setup-haxe@d93667502be3b4f31a94a3308a74388f2e178a8d # v2.1.0
         with:
+          # 必须用 neko 2.3: 2.4+ 的 neko.Lib.load 在 lime.ndll 缺失时直接抛
+          # "Failed to load library" (optional-cffi 降级失效), 2.3 返回 null 走降级,
+          # 与本机工具链一致 (fork 的 run.n 不含 lime.ndll, 依赖降级模式运行)
           haxe-version: 4.2.5
-          neko-version: latest
+          neko-version: 2.3.0
 
       - name: Install Haxe deps
         run: |
@@ -91,8 +97,11 @@ jobs:
 
       - uses: krdlab/setup-haxe@d93667502be3b4f31a94a3308a74388f2e178a8d # v2.1.0
         with:
+          # 必须用 neko 2.3: 2.4+ 的 neko.Lib.load 在 lime.ndll 缺失时直接抛
+          # "Failed to load library" (optional-cffi 降级失效), 2.3 返回 null 走降级,
+          # 与本机工具链一致 (fork 的 run.n 不含 lime.ndll, 依赖降级模式运行)
           haxe-version: 4.2.5
-          neko-version: latest
+          neko-version: 2.3.0
 
       - name: Install Haxe deps
         run: |
@@ -131,8 +140,11 @@ jobs:
 
       - uses: krdlab/setup-haxe@d93667502be3b4f31a94a3308a74388f2e178a8d # v2.1.0
         with:
+          # 必须用 neko 2.3: 2.4+ 的 neko.Lib.load 在 lime.ndll 缺失时直接抛
+          # "Failed to load library" (optional-cffi 降级失效), 2.3 返回 null 走降级,
+          # 与本机工具链一致 (fork 的 run.n 不含 lime.ndll, 依赖降级模式运行)
           haxe-version: 4.2.5
-          neko-version: latest
+          neko-version: 2.3.0
 
       - name: Install Haxe deps
         run: |
@@ -170,8 +182,11 @@ jobs:
 
       - uses: krdlab/setup-haxe@d93667502be3b4f31a94a3308a74388f2e178a8d # v2.1.0
         with:
+          # 必须用 neko 2.3: 2.4+ 的 neko.Lib.load 在 lime.ndll 缺失时直接抛
+          # "Failed to load library" (optional-cffi 降级失效), 2.3 返回 null 走降级,
+          # 与本机工具链一致 (fork 的 run.n 不含 lime.ndll, 依赖降级模式运行)
           haxe-version: 4.2.5
-          neko-version: latest
+          neko-version: 2.3.0
 
       - name: Install Haxe deps
         run: |
