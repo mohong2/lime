@@ -362,7 +362,15 @@ namespace lime {
 			dropEvent.file = (vbyte*)event->drop.data;
 
 			DropEvent::Dispatch (&dropEvent);
-			SDL_free (dropEvent.file);
+
+			// SDL3 owns event->drop.data: it is created with
+			// SDL_CreateTemporaryString() and freed automatically by
+			// SDL_FreeTemporaryMemory() at the start of the next
+			// SDL_PumpEvents() call (see SDL_events.c). Unlike SDL2, the
+			// application must NOT call SDL_free() on it - doing so causes
+			// a double free and heap corruption (the game freezes on drop).
+			// If the string must be kept beyond this frame, claim it with
+			// SDL_ClaimTemporaryMemory() instead.
 
 		}
 

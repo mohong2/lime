@@ -962,6 +962,14 @@ namespace lime {
 
 	bool SDLWindow::SetFullscreen (bool fullscreen) {
 
+		bool currentlyFullscreen = (SDL_GetWindowFlags (sdlWindow) & SDL_WINDOW_FULLSCREEN) != 0;
+
+		if (fullscreen && currentlyFullscreen) {
+
+			return fullscreen;
+
+		}
+
 		if (fullscreen) {
 
 			bool borderless = (SDL_GetWindowFlags (sdlWindow) & SDL_WINDOW_BORDERLESS) != 0;
