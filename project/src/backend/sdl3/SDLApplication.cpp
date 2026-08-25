@@ -204,6 +204,7 @@ namespace lime {
 			case SDL_EVENT_FINGER_MOTION:
 			case SDL_EVENT_FINGER_DOWN:
 			case SDL_EVENT_FINGER_UP:
+			case SDL_EVENT_FINGER_CANCELED:
 
 				ProcessTouchEvent (event);
 				break;
@@ -751,6 +752,9 @@ namespace lime {
 					break;
 
 				case SDL_EVENT_FINGER_UP:
+				// 取消的触摸视同抬起: SDL 内部已删除该手指, 上层必须同样结束它,
+				// 否则 lime currentTouches / flixel FlxTouch 会永久残留。
+				case SDL_EVENT_FINGER_CANCELED:
 
 					touchEvent.type = TOUCH_END;
 					break;

@@ -239,6 +239,11 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
         int touchDevId = event.getDeviceId();
         final int pointerCount = event.getPointerCount();
         int action = event.getActionMasked();
+
+        if (action == MotionEvent.ACTION_CANCEL) {
+            action = MotionEvent.ACTION_UP;
+        }
+
         int pointerId;
         int i = 0;
         float x,y,p;
@@ -401,7 +406,7 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
                     SDLActivity.onNativeMouse(button, action, x, y, true);
                     return true;
             }
-        }      
+        }
 
         return false;
     }

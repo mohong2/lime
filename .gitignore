@@ -38,3 +38,9 @@ package-lock.json
 node_modules
 !templates/**/node_modules
 .vscode/
+
+# Gradle 构建缓存与生成的报告（本地构建产物，不入库）
+# 注意：不要加全局 build/ 规则——project/lib/openal/build/ 是上游有意跟踪的预生成头文件
+.gradle/
+dependencies/extension-api/build/
+templates/extension/dependencies/android/build/
