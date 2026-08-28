@@ -51,6 +51,7 @@ namespace lime {
 			void ProcessTouchEvent (SDL_Event* event);
 			void ProcessWindowEvent (SDL_Event* event);
 			int WaitEvent (SDL_Event* event);
+			int WaitEventTimeout (SDL_Event* event, int timeout);
 
 			static void UpdateFrame ();
 			static void UpdateFrame (void*);
@@ -60,15 +61,15 @@ namespace lime {
 			bool active;
 			ApplicationEvent applicationEvent;
 			ClipboardEvent clipboardEvent;
-			Uint32 currentUpdate;
+			double currentUpdate; // Performance-counter time in ms.
 			double framePeriod;
 			DropEvent dropEvent;
 			GamepadEvent gamepadEvent;
 			JoystickEvent joystickEvent;
 			KeyEvent keyEvent;
-			Uint32 lastUpdate;
+			double lastUpdate; // Performance-counter time in ms.
 			MouseEvent mouseEvent;
-			Uint32 nextUpdate;
+			double nextUpdate; // Double precision avoids truncating the frame period.
 			RenderEvent renderEvent;
 			SensorEvent sensorEvent;
 			TextEvent textEvent;
