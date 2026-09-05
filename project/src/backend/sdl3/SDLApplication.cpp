@@ -813,6 +813,25 @@ namespace lime {
 				case SDL_EVENT_WINDOW_RESIZED:
 
 					windowEvent.type = WINDOW_RESIZE;
+
+					// SDL_EVENT_WINDOW_RESIZED is in screen coordinates (points
+					// on macOS), but SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED is in
+					// physical pixels (2x on Retina displays). Lime window sizes
+					// are in screen coordinates, so resolve pixel-size events
+					// back to the window size instead of using the event data.
+					if (event->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+
+						SDL_Window* resizedWindow = SDL_GetWindowFromID (event->window.windowID);
+
+						if (resizedWindow) {
+
+							SDL_GetWindowSize (resizedWindow, &windowEvent.width, &windowEvent.height);
+							break;
+
+						}
+
+					}
+
 					windowEvent.width = event->window.data1;
 					windowEvent.height = event->window.data2;
 					break;
