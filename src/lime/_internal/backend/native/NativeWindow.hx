@@ -214,6 +214,10 @@ class NativeWindow
 
 	public function contextFlip():Void
 	{
+		// Same window as render(): after close() the handle is null but the render
+		// loop still dispatches, and the native side then calls into a NULL Window*.
+		if (handle == null) return;
+
 		#if (!macro && lime_cffi)
 		if (!useHardware)
 		{
@@ -406,6 +410,13 @@ class NativeWindow
 
 	public function render():Void
 	{
+		// close() nulls `handle` but leaves `context` set, and
+		// NativeApplication.handleRenderEvent only gates on `window.context != null`,
+		// so the render loop keeps calling us after the native window is gone.
+		// Without this guard the native side dereferences NULL (fault address is a
+		// small struct offset such as 0x8 / 0x10 / 0x30).
+		if (handle == null) return;
+
 		#if (!macro && lime_cffi)
 		NativeCFFI.lime_window_context_make_current(handle);
 
