@@ -188,7 +188,10 @@ namespace lime {
 				#else
 				result = new std::wstring (path, path + strlen (path));
 				#endif
-				SDL_free ((void*)path);
+				// SDL3 owns this string: SDL_GetBasePath returns a process-static
+				// cache (SDL_filesystem.c, released only by SDL_QuitFilesystem via
+				// SDL_Quit). Freeing it here is a use-after-free on the next call
+				// and a guaranteed double free at exit. Do NOT SDL_free it.
 				break;
 
 			}
