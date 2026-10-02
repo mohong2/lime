@@ -1,6 +1,6 @@
 package lime.ui;
 
-@:enum abstract GamepadButton(Int) from Int to Int from UInt to UInt
+enum abstract GamepadButton(Int) from Int to Int from UInt to UInt
 {
 	var A = 0;
 	var B = 1;

@@ -1,6 +1,6 @@
 package lime.net;
 
-@:enum abstract HTTPRequestMethod(String) from String to String
+enum abstract HTTPRequestMethod(String) from String to String
 {
 	public var DELETE = "DELETE";
 	public var GET = "GET";

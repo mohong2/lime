@@ -1,6 +1,6 @@
 package lime.utils;
 
-@:enum abstract LogLevel(Int) from Int to Int from UInt to UInt
+enum abstract LogLevel(Int) from Int to Int from UInt to UInt
 {
 	var NONE = 0;
 	var ERROR = 1;

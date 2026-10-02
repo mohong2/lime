@@ -1,6 +1,6 @@
 package lime.utils;
 
-@:enum abstract AssetType(String) to String
+enum abstract AssetType(String) to String
 {
 	var BINARY = "BINARY";
 	var FONT = "FONT";

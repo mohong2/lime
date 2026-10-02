@@ -4,7 +4,7 @@ import lime._internal.backend.native.NativeCFFI;
 
 @:access(lime._internal.backend.native.NativeCFFI)
 @:access(lime.ui.KeyCode)
-@:enum abstract ScanCode(Int) from Int to Int from UInt to UInt
+enum abstract ScanCode(Int) from Int to Int from UInt to UInt
 {
 	var UNKNOWN = 0;
 	var BACKSPACE = 42;

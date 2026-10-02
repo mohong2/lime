@@ -1,6 +1,6 @@
 package lime.tools;
 
-@:enum abstract Platform(String)
+enum abstract Platform(String)
 {
 	var AIR = "air";
 	var ANDROID = "android";
