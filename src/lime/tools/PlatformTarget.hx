@@ -49,12 +49,16 @@ class PlatformTarget
 	{
 		// Log.info ("", Log.accentColor + "Using target platform: " + Std.string (project.target).toUpperCase () + Log.resetColor);
 
+		var startTime = Sys.time();
+		var executed = new Array<String>();
+
 		this.additionalArguments = additionalArguments;
 		var metaFields = Meta.getFields(Type.getClass(this));
 
 		if (/*!Reflect.hasField (metaFields.watch, "ignore") && */ (project.targetFlags.exists("watch")))
 		{
 			Log.info("", "\n" + Log.accentColor + "Running command: WATCH" + Log.resetColor);
+			executed.push("WATCH");
 			watch();
 			return;
 		}
@@ -70,6 +74,7 @@ class PlatformTarget
 				|| (project.targetFlags.exists("clean") && (command == "update" || command == "build" || command == "test"))))
 		{
 			Log.info("", Log.accentColor + "Running command: CLEAN" + Log.resetColor);
+			executed.push("CLEAN");
 			clean();
 		}
 
@@ -77,6 +82,7 @@ class PlatformTarget
 			&& (command == "rebuild" || project.targetFlags.exists("rebuild")))
 		{
 			Log.info("", "\n" + Log.accentColor + "Running command: REBUILD" + Log.resetColor);
+			executed.push("REBUILD");
 
 			// hack for now, need to move away from project.rebuild.path, probably
 
@@ -92,6 +98,7 @@ class PlatformTarget
 			&& (command == "update" || command == "build" || command == "test"))
 		{
 			Log.info("", "\n" + Log.accentColor + "Running command: UPDATE" + Log.resetColor);
+			executed.push("UPDATE");
 			// #if lime
 			// AssetHelper.processLibraries (project, targetDirectory);
 			// #end
@@ -104,6 +111,7 @@ class PlatformTarget
 			CommandHelper.executeCommands(project.preBuildCallbacks);
 
 			Log.info("", "\n" + Log.accentColor + "Running command: BUILD" + Log.resetColor);
+			executed.push("BUILD");
 			build();
 
 			CommandHelper.executeCommands(project.postBuildCallbacks);
@@ -112,6 +120,7 @@ class PlatformTarget
 		if ((!Reflect.hasField(metaFields, "deploy") || !Reflect.hasField(metaFields.deploy, "ignore")) && (command == "deploy"))
 		{
 			Log.info("", "\n" + Log.accentColor + "Running command: DEPLOY" + Log.resetColor);
+			executed.push("DEPLOY");
 			deploy();
 		}
 
@@ -119,6 +128,7 @@ class PlatformTarget
 			&& (command == "install" || command == "run" || command == "test"))
 		{
 			Log.info("", "\n" + Log.accentColor + "Running command: INSTALL" + Log.resetColor);
+			executed.push("INSTALL");
 			install();
 		}
 
@@ -126,6 +136,7 @@ class PlatformTarget
 			&& (command == "run" || command == "rerun" || command == "test"))
 		{
 			Log.info("", "\n" + Log.accentColor + "Running command: RUN" + Log.resetColor);
+			executed.push("RUN");
 			run();
 		}
 
@@ -135,6 +146,7 @@ class PlatformTarget
 			if (traceEnabled || command == "trace")
 			{
 				Log.info("", "\n" + Log.accentColor + "Running command: TRACE" + Log.resetColor);
+			executed.push("TRACE");
 				this.trace();
 			}
 		}
@@ -142,8 +154,11 @@ class PlatformTarget
 		if ((!Reflect.hasField(metaFields, "uninstall") || !Reflect.hasField(metaFields.uninstall, "ignore")) && (command == "uninstall"))
 		{
 			Log.info("", "\n" + Log.accentColor + "Running command: UNINSTALL" + Log.resetColor);
+			executed.push("UNINSTALL");
 			uninstall();
 		}
+
+		BuildReport.print(this, startTime, executed);
 	}
 
 	@ignore public function build():Void {}
