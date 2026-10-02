@@ -20,6 +20,7 @@
 		<depend name="${NATIVE_TOOLKIT_PATH}/png/pngpriv.h"/>
 		<depend name="${NATIVE_TOOLKIT_PATH}/png/pngconf.h"/>
 		<depend name="${NATIVE_TOOLKIT_PATH}/png/pngdebug.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/zlib/zlib.h"/>
 
 
 		<file name="${NATIVE_TOOLKIT_PATH}/png/png.c" />
@@ -42,9 +43,33 @@
 			
 			<file name="${NATIVE_TOOLKIT_PATH}/png/arm/arm_init.c" />
 			<file name="${NATIVE_TOOLKIT_PATH}/png/arm/filter_neon_intrinsics.c" />
+			<file name="${NATIVE_TOOLKIT_PATH}/png/arm/palette_neon_intrinsics.c" />
 			
 		</section>
-		
+
+		<!-- libpng 1.6.44 Intel SSE2 row-filter kernels (intel/), copied verbatim from
+		     upstream.  pngpriv.h derives the ISA level itself, so no arch define is
+		     needed here: with default MSVC flags on x64 it resolves to
+		     PNG_INTEL_SSE_IMPLEMENTATION 1, i.e. PURE SSE2 - that is the x64 baseline,
+		     and the MSVC x86 default is already /arch:SSE2.  The SSE4.1/SSSE3 paths sit
+		     behind 'PNG_INTEL_SSE_IMPLEMENTATION >= 3' / '>= 2' with SSE2 fallbacks, so
+		     nothing here can emit an instruction an SSE2-only CPU lacks.
+		     PNG_INTEL_SSE is defined per target instead of in pnglibconf.h precisely so
+		     that non-x86 and non-Windows targets keep the scalar build byte-for-byte
+		     unchanged.  intel_init.c only installs kernels for bpp 3 (RGB) and 4 (RGBA);
+		     grayscale, palette and 16-bit images are untouched. -->
+		<section if="windows">
+
+			<compilerflag value="-DPNG_INTEL_SSE" />
+
+			<file name="${NATIVE_TOOLKIT_PATH}/png/intel/intel_init.c" />
+			<file name="${NATIVE_TOOLKIT_PATH}/png/intel/filter_sse2_intrinsics.c" />
+
+		</section>
+
+		<depend name="${NATIVE_TOOLKIT_PATH}/png/intel/intel_init.c"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/png/intel/filter_sse2_intrinsics.c"/>
+
 	</files>
 	
 </xml>

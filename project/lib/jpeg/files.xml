@@ -4,72 +4,174 @@
 		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jpeglib.h"/>
 	</files>
 	
+	<!--
+		libjpeg-turbo 3.0.4 (8-bit / libjpeg API+ABI v6.2, SIMD disabled).
+		Upstream keeps its sources next to the headers; they live in src/ here, so
+		this group adds the include path for the headers kept in jpeg/ (Build.xml
+		already passes -I${NATIVE_TOOLKIT_PATH}/jpeg/ for src/graphics/format/JPEG.cpp).
+		Files listed below are exactly upstream CMakeLists.txt JPEG_SOURCES with
+		WITH_ARITH_ENC/DEC=1 and WITH_SIMD=0.  jccolext.c, jstdhuff.c, jdcolext.c,
+		jdcol565.c, jdmrgext.c and jdmrg565.c are #included by those sources, so they
+		are present in src/ but must not be compiled separately (upstream does the same).
+	-->
+	
 	<files id="native-toolkit-jpeg" tags="">
 		<cache value="1" />
 		
 		<tag value="${NATIVE_TOOLKIT_OPTIM_TAG}" if="NATIVE_TOOLKIT_OPTIM_TAG" />
 		
+		<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/jpeg/"/>
+		
 		<depend files="native-toolkit-jpeg-depends"/>
 		
-		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/transupp.h"/>
-		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jversion.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jchuff.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jcmaster.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jconfig.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jconfigint.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jdcoefct.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jdct.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jdhuff.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jdmainct.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jdmaster.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jdmerge.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jdsample.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jerror.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jinclude.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jlossls.h"/>
 		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jmemsys.h"/>
 		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jmorecfg.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jpeg_nbits.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jpegapicomp.h"/>
 		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jpegint.h"/>
-		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jinclude.h"/>
-		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jerror.h"/>
-		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jdct.h"/>
-		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jconfig.h"/>
-		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/cdjpeg.h"/>
-		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/cderror.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jsamplecomp.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jsimd.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jsimddct.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/jversion.h"/>
 		
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jcapimin.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jcapistd.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jctrans.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jcparam.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdatadst.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jcinit.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jcmaster.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jcmarker.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jcmainct.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jcprepct.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jccoefct.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jccolor.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jcsample.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jchuff.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jcdctmgr.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jfdctfst.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jfdctflt.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jfdctint.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdapimin.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdapistd.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdtrans.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdatasrc.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdmaster.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdinput.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdmarker.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdhuff.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdmainct.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdcoefct.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdpostct.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jddctmgr.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jidctfst.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jidctflt.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jidctint.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdsample.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdcolor.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jquant1.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jquant2.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdmerge.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jcomapi.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jutils.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jerror.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jmemmgr.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jmemnobs.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jaricom.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jcarith.c"/>
-		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/jdarith.c"/>
-		
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcapistd.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jccolor.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcdiffct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jclossls.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcmainct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcprepct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcsample.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdapistd.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdcolor.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jddiffct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdlossls.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdmainct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdpostct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdsample.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jutils.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jccoefct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcdctmgr.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdcoefct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jddctmgr.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdmerge.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jfdctfst.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jfdctint.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jidctflt.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jidctfst.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jidctint.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jidctred.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jquant1.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jquant2.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcapimin.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jchuff.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcicc.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcinit.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jclhuff.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcmarker.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcmaster.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcomapi.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcparam.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcphuff.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jctrans.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdapimin.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdatadst.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdatasrc.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdhuff.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdicc.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdinput.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdlhuff.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdmarker.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdmaster.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdphuff.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdtrans.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jerror.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jfdctflt.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jmemmgr.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jmemnobs.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jpeg_nbits.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jaricom.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jcarith.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/src/jdarith.c"/>
+		<!-- 12-bit and 16-bit passes of the multi-precision library: upstream links them as the
+		     jpeg12-static / jpeg16-static object libraries (CMakeLists.txt 596-606 and 658-669).
+		     jdmaster.c / jcinit.c / jdtrans.c dispatch on cinfo->data_precision and therefore
+		     reference j12init_* / j16init_* unconditionally.  Each wrapper defines
+		     BITS_IN_JSAMPLE before including ../src/<name>.c, which is equivalent to upstream's
+		     -DBITS_IN_JSAMPLE=12/16 compiler flag (jconfig.h/jconfigint.h only default the macro
+		     when it is undefined).  Separate directories keep hxcpp object names distinct. -->
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jcapistd.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jccolor.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jcdiffct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jclossls.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jcmainct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jcprepct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jcsample.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jdapistd.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jdcolor.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jddiffct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jdlossls.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jdmainct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jdpostct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jdsample.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jutils.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jccoefct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jcdctmgr.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jdcoefct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jddctmgr.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jdmerge.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jfdctfst.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jfdctint.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jidctflt.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jidctfst.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jidctint.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jidctred.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jquant1.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j12/jquant2.c"/>
+
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jcapistd.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jccolor.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jcdiffct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jclossls.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jcmainct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jcprepct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jcsample.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jdapistd.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jdcolor.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jddiffct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jdlossls.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jdmainct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jdpostct.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jdsample.c"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/j16/jutils.c"/>
+
+		<!-- libjpeg-turbo 3.0.4 SIMD (NASM) kernels.
+		     WITH_SIMD is switched on in jconfigint.h for MSVC x86/x64 only, and the
+		     matching arch dispatcher is compiled there; the kernels themselves are
+		     .asm, which hxcpp cannot assemble, so they are turned into
+		     lib/jpeg/simd/jsimd_<arch>.lib ahead of time by
+		     _lime_backend_upgrade\build_jpeg_simd.ps1 (NASM 2.16.03, source list and
+		     flags copied from lib/jpeg/simd/CMakeLists.txt) and linked in by
+		     Build.xml.  Without that .lib the link fails with unresolved jsimd_*. -->
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/simd/x86_64/jsimd.c" if="windows HXCPP_M64"/>
+		<file name="${NATIVE_TOOLKIT_PATH}/jpeg/simd/i386/jsimd.c" if="windows HXCPP_M32"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/simd/jsimd.h"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/simd/jsimd_x86_64.lib"/>
+		<depend name="${NATIVE_TOOLKIT_PATH}/jpeg/simd/jsimd_i386.lib"/>
+
 	</files>
 	
 </xml>

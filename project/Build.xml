@@ -470,6 +470,13 @@
 				<lib name="libhl.lib" if="LIME_HASHLINK" />
 				<!-- <lib name="-delayload:libhl.dll" /> -->
 
+				<!-- libjpeg-turbo 3.0.4 NASM SIMD kernels, pre-assembled into a static
+				     library by _lime_backend_upgrade\build_jpeg_simd.ps1 (NASM 2.16.03).
+				     Required whenever lib/jpeg/jconfigint.h defines WITH_SIMD, i.e. on
+				     the MSVC x86/x64 targets; see lib/jpeg/files.xml. -->
+				<lib name="${NATIVE_TOOLKIT_PATH}/jpeg/simd/jsimd_x86_64.lib" if="LIME_JPEG HXCPP_M64" />
+				<lib name="${NATIVE_TOOLKIT_PATH}/jpeg/simd/jsimd_i386.lib" if="LIME_JPEG HXCPP_M32" />
+
 			</section>
 
 			<section if="linux">

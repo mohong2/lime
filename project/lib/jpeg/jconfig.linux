@@ -1,45 +1,42 @@
-/* jconfig.h.  Generated automatically by configure.  */
-/* jconfig.cfg --- source file edited by configure script */
-/* see jconfig.doc for explanations */
+/* jconfig.linux --- libjpeg-turbo 3.0.4 configuration for Unix-like targets.
+ *
+ * CMake's non-_WIN32 branch of configure_file(jconfig.h.in) for
+ * -DWITH_SIMD=0 -DWITH_JPEG8=0.  Upstream produces the same result for Linux,
+ * macOS, iOS, tvOS, Android and Emscripten, so jconfig.mac, jconfig.iphoneos
+ * and this file are intentionally identical.
+ */
 
-#define HAVE_PROTOTYPES 
-#define HAVE_UNSIGNED_CHAR 
-#define HAVE_UNSIGNED_SHORT 
-#undef void
-#undef const
-#undef CHAR_IS_UNSIGNED
-#define HAVE_STDDEF_H 
-#define HAVE_STDLIB_H 
-#undef NEED_BSD_STRINGS
-#undef NEED_SYS_TYPES_H
-#undef NEED_FAR_POINTERS
-#undef NEED_SHORT_EXTERNAL_NAMES
-/* Define this if you get warnings about undefined structures. */
-#undef INCOMPLETE_TYPES_BROKEN
+/* Version ID for the JPEG library.
+ * Might be useful for tests like "#if JPEG_LIB_VERSION >= 60".
+ */
+#define JPEG_LIB_VERSION  62
 
-#ifdef JPEG_INTERNALS
+/* libjpeg-turbo version */
+#define LIBJPEG_TURBO_VERSION  3.0.4
 
-#undef RIGHT_SHIFT_IS_UNSIGNED
-#define INLINE __inline__
-/* These are for configuring the JPEG memory manager. */
-#undef DEFAULT_MAX_MEM
-#undef NO_MKTEMP
+/* libjpeg-turbo version in integer form */
+#define LIBJPEG_TURBO_VERSION_NUMBER  3000004
 
-#endif /* JPEG_INTERNALS */
+/* Support arithmetic encoding when using 8-bit samples */
+#define C_ARITH_CODING_SUPPORTED 1
 
-#ifdef JPEG_CJPEG_DJPEG
+/* Support arithmetic decoding when using 8-bit samples */
+#define D_ARITH_CODING_SUPPORTED 1
 
-#define BMP_SUPPORTED		/* BMP image file format */
-#define GIF_SUPPORTED		/* GIF image file format */
-#define PPM_SUPPORTED		/* PBMPLUS PPM/PGM image file format */
-#undef RLE_SUPPORTED		/* Utah RLE image file format */
-#define TARGA_SUPPORTED		/* Targa image file format */
+/* Support in-memory source/destination managers */
+#define MEM_SRCDST_SUPPORTED  1
 
-#undef TWO_FILE_COMMANDLINE
-#undef NEED_SIGNAL_CATCHER
-#undef DONT_USE_B_MODE
+/* Use accelerated SIMD routines when using 8-bit samples */
+/* #undef WITH_SIMD */
 
-/* Define this if you want percent-done progress reports from cjpeg/djpeg. */
-#undef PROGRESS_REPORT
+/* This version of libjpeg-turbo supports run-time selection of data precision,
+ * so BITS_IN_JSAMPLE is no longer used to specify the data precision at build
+ * time.  However, some downstream software expects the macro to be defined.
+ */
+#ifndef BITS_IN_JSAMPLE
+#define BITS_IN_JSAMPLE  8
+#endif
 
-#endif /* JPEG_CJPEG_DJPEG */
+/* Define if your (broken) compiler shifts signed values as if they were
+   unsigned. */
+/* #undef RIGHT_SHIFT_IS_UNSIGNED */

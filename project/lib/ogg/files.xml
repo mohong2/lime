@@ -15,6 +15,8 @@
 
         <depend files="native-toolkit-ogg-depends" />
 
+        <depend name="${NATIVE_TOOLKIT_PATH}/ogg/src/crctable.h"/>
+
         <file name="${NATIVE_TOOLKIT_PATH}/ogg/src/bitwise.c" />
         <file name="${NATIVE_TOOLKIT_PATH}/ogg/src/framing.c" />
 
