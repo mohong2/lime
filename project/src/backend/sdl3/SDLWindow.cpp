@@ -10,8 +10,39 @@
 #undef CreateWindow
 #endif
 
-
 namespace lime {
+
+
+	// SeiunEngine: opt-in switch for SDL's touch -> mouse event synthesis.
+	//
+	// By default SDL reports every finger contact twice: once as a touch event
+	// (SDL_EVENT_FINGER_*) and once as a synthesized mouse event
+	// (SDL_EVENT_MOUSE_* with which == SDL_TOUCH_MOUSEID). lime hands both of
+	// them to Haxe, so one tap costs two complete input pipelines - two event
+	// objects, two OpenFL hit tests, two Flixel input-manager updates - and a
+	// drag costs two per motion sample.
+	//
+	// Games that read touches directly (Psych Engine's on-screen controls go
+	// through FlxG.touches) can turn the synthesis off and roughly halve their
+	// per-touch input cost. It is opt-in, with no change to the default,
+	// because code that only listens to FlxG.mouse would stop seeing taps:
+	//
+	//   Android: adb shell setprop debug.seiun.no_touch_mouse 1  (restart app)
+	//   Other:   set SEIUN_NO_TOUCH_MOUSE=1
+	static const char* SeiunTouchMouseEventsHint () {
+
+		static int resolved = -1;
+
+		if (resolved < 0) {
+
+			SeiunLeverCached ("SEIUN_NO_TOUCH_MOUSE", "debug.seiun.no_touch_mouse", &resolved,
+				"[SEIUN] touch->mouse synthesis disabled");
+
+		}
+
+		return resolved ? "0" : "1";
+
+	}
 
 
 	static Cursor currentCursor = DEFAULT;
@@ -83,7 +114,10 @@ namespace lime {
 		SDL_SetHint (SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "0");
 		SDL_SetHint (SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
 		SDL_SetHint (SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
-		SDL_SetHint (SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
+		// SeiunEngine: "1" (SDL's default) makes every touch arrive twice, once
+		// as a touch event and once as a synthesized mouse event. See
+		// SeiunTouchMouseEventsHint() above for the opt-in switch.
+		SDL_SetHint (SDL_HINT_TOUCH_MOUSE_EVENTS, SeiunTouchMouseEventsHint ());
 		#endif
 
 		if (flags & WINDOW_FLAG_HARDWARE) {
@@ -117,7 +151,13 @@ namespace lime {
 
 			if (flags & WINDOW_FLAG_DEPTH_BUFFER) {
 
-				SDL_GL_SetAttribute (SDL_GL_DEPTH_SIZE, 32 - (flags & WINDOW_FLAG_STENCIL_BUFFER) ? 8 : 0);
+				// SeiunEngine: the original expression was
+				//   32 - (flags & WINDOW_FLAG_STENCIL_BUFFER) ? 8 : 0
+				// which parses as ((32 - x) != 0) ? 8 : 0 and therefore always
+				// asked for an 8-bit depth buffer, never the intended 24/32-bit
+				// one, regardless of the stencil flag. Parenthesised the same way
+				// upstream lime fixed it.
+				SDL_GL_SetAttribute (SDL_GL_DEPTH_SIZE, 32 - ((flags & WINDOW_FLAG_STENCIL_BUFFER) ? 8 : 0));
 
 			}
 
@@ -207,7 +247,9 @@ namespace lime {
 
 			if (context && SDL_GL_MakeCurrent (sdlWindow, context)) {
 
-				if (flags & WINDOW_FLAG_VSYNC) {
+				// SeiunEngine: SeiunForceVSync() (SeiunLevers.h) is the opt-in
+				// diagnostic for findings E1. Default path unchanged.
+				if (SeiunForceVSync () || (flags & WINDOW_FLAG_VSYNC)) {
 
 					SDL_GL_SetSwapInterval (1);
 
@@ -572,8 +614,11 @@ namespace lime {
 
 	int SDLWindow::GetHeight () {
 
-		int width;
-		int height;
+		// SeiunEngine: initialise, because SDL_GetWindowSize() can fail (for
+		// example while Android is between surfaces after an IME show/hide or a
+		// rotation) and would otherwise return stack garbage here.
+		int width = 0;
+		int height = 0;
 
 		SDL_GetWindowSize (sdlWindow, &width, &height);
 
@@ -598,32 +643,42 @@ namespace lime {
 
 	double SDLWindow::GetScale () {
 
+		// SeiunEngine: guard against a zero window size. On Android the window
+		// can briefly report width == 0 (or fail) while the surface is being
+		// recreated - IME show/hide, rotation, a popup dialog - and
+		// outputWidth / 0 is +Inf, which then propagates into
+		// lime.ui.Window.scale -> the OpenFL stage scale and produces a broken
+		// render target for that frame. Upstream lime added the same guard.
 		if (sdlRenderer) {
 
-			int outputWidth;
-			int outputHeight;
+			int outputWidth = 0;
+			int outputHeight = 0;
 
 			SDL_GetCurrentRenderOutputSize (sdlRenderer, &outputWidth, &outputHeight);
 
-			int width;
-			int height;
+			int width = 0;
+			int height = 0;
 
 			SDL_GetWindowSize (sdlWindow, &width, &height);
+
+			if (width <= 0) return 1;
 
 			double scale = double (outputWidth) / width;
 			return scale;
 
 		} else if (context) {
 
-			int outputWidth;
-			int outputHeight;
+			int outputWidth = 0;
+			int outputHeight = 0;
 
 			SDL_GetWindowSizeInPixels (sdlWindow, &outputWidth, &outputHeight);
 
-			int width;
-			int height;
+			int width = 0;
+			int height = 0;
 
 			SDL_GetWindowSize (sdlWindow, &width, &height);
+
+			if (width <= 0) return 1;
 
 			double scale = double (outputWidth) / width;
 			return scale;
@@ -644,8 +699,8 @@ namespace lime {
 
 	int SDLWindow::GetWidth () {
 
-		int width;
-		int height;
+		int width = 0;
+		int height = 0;
 
 		SDL_GetWindowSize (sdlWindow, &width, &height);
 

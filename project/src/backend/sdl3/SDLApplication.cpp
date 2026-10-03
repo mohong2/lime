@@ -19,6 +19,10 @@
 #include "emscripten.h"
 #endif
 
+#ifdef ANDROID
+#include <sys/system_properties.h>
+#endif
+
 
 namespace lime {
 
@@ -38,6 +42,296 @@ namespace lime {
 		return (double) SDL_GetPerformanceCounter () * invFreq;
 
 	}
+
+	// -----------------------------------------------------------------------
+	// SeiunEngine on-device frame probe.
+	//
+	// There is no way to reproduce a phone-level frame drop on a desktop, so
+	// instead of guessing this ships a forensic build: when enabled, the C++
+	// frame driver logs one line per *slow* frame plus a periodic summary
+	// through SDL_Log, which the Android backend writes to logcat. Per frame it
+	// records:
+	//
+	//   delta  - wall time since the previous frame dispatch. This is the
+	//            number that actually decides whether the player saw a hitch.
+	//   drain  - time spent inside the SDL event drain loop. That is the input
+	//            cost, i.e. "what a button press costs before the engine runs".
+	//   work   - time spent dispatching UPDATE + RENDER (engine + GPU submit).
+	//   events - how many SDL events were handled, with a per-type histogram for
+	//            slow frames, so "pressing a button drops a frame" becomes
+	//            "finger_down x1 drain=18.3ms" instead of a feeling.
+	//
+	// The probe is compiled in unconditionally but is inert unless a flag is
+	// set, so enabling it never requires a rebuild:
+	//
+	//   Android: adb shell setprop debug.seiun.frame_probe 1   (then restart the app)
+	//   Desktop/other: SEIUN_FRAME_PROBE=1 in the environment
+	//
+	// Read it with:
+	//   adb logcat -c ; adb logcat -s SDL:V    (then grep for SEIUN)
+	//
+	// When disabled the cost is one predictable branch per SDL event and a
+	// single cached property/environment lookup at startup.
+	// -----------------------------------------------------------------------
+
+	static int probeEnabled = -1;
+	static Uint64 probeFrame = 0;
+	static Uint64 probeSlowFrames = 0;
+	static Uint64 probeDumps = 0;
+	static Uint64 probeLastDumpFrame = 0;
+	static Uint32 probeEventCount = 0;
+	static Uint32 probeEventTotal = 0;
+	static Uint16 probeTypes[24];
+	static Uint32 probeTypeCounts[24];
+	static Uint32 probeTypeKinds = 0;
+	static double probeFrameStart = 0.0;
+	static double probeDrainStart = 0.0;
+	static double probeDeltaSum = 0.0;
+	static double probeDeltaMax = 0.0;
+	static double probeDrainMax = 0.0;
+	static double probeWorkSum = 0.0;
+	static double probeWorkMax = 0.0;
+
+	// Frame-time histogram, in units of the frame budget. One increment per
+	// frame, so it costs nothing, and it is what turns "it feels stuttery" into
+	// a p95/p99 that can be quoted: the periodic summary prints the cumulative
+	// counts and temp/perf/lime-mobile-probe-analyze.ps1 reads them back.
+	// Edges: <1.0x, <1.25x, <1.5x, <2x, <3x, <4x, <8x, >=8x of the budget.
+	#define PROBE_HISTOGRAM_BUCKETS 8
+	static Uint32 probeHistogram[PROBE_HISTOGRAM_BUCKETS] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+
+	static const char* ProbeEventName (Uint16 type) {
+
+		switch (type) {
+
+			case SDL_EVENT_KEY_DOWN: return "key_down";
+			case SDL_EVENT_KEY_UP: return "key_up";
+			case SDL_EVENT_TEXT_INPUT: return "text_input";
+			case SDL_EVENT_TEXT_EDITING: return "text_editing";
+			case SDL_EVENT_MOUSE_MOTION: return "mouse_motion";
+			case SDL_EVENT_MOUSE_BUTTON_DOWN: return "mouse_down";
+			case SDL_EVENT_MOUSE_BUTTON_UP: return "mouse_up";
+			case SDL_EVENT_MOUSE_WHEEL: return "mouse_wheel";
+			case SDL_EVENT_FINGER_DOWN: return "finger_down";
+			case SDL_EVENT_FINGER_UP: return "finger_up";
+			case SDL_EVENT_FINGER_MOTION: return "finger_motion";
+			case SDL_EVENT_FINGER_CANCELED: return "finger_canceled";
+			case SDL_EVENT_WINDOW_EXPOSED: return "win_exposed";
+			case SDL_EVENT_WINDOW_RESIZED: return "win_resized";
+			case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: return "win_pixel_size";
+			case SDL_EVENT_WINDOW_SHOWN: return "win_shown";
+			case SDL_EVENT_WINDOW_HIDDEN: return "win_hidden";
+			case SDL_EVENT_WINDOW_FOCUS_GAINED: return "win_focus_in";
+			case SDL_EVENT_WINDOW_FOCUS_LOST: return "win_focus_out";
+			case SDL_EVENT_WINDOW_CLOSE_REQUESTED: return "win_close";
+			case SDL_EVENT_WINDOW_MINIMIZED: return "win_minimized";
+			case SDL_EVENT_WINDOW_MAXIMIZED: return "win_maximized";
+			case SDL_EVENT_WINDOW_RESTORED: return "win_restored";
+			case SDL_EVENT_WINDOW_MOUSE_ENTER: return "win_enter";
+			case SDL_EVENT_WINDOW_MOUSE_LEAVE: return "win_leave";
+			case SDL_EVENT_WINDOW_MOVED: return "win_moved";
+			case SDL_EVENT_WINDOW_SAFE_AREA_CHANGED: return "win_safe_area";
+			case SDL_EVENT_GAMEPAD_AXIS_MOTION: return "pad_axis";
+			case SDL_EVENT_GAMEPAD_BUTTON_DOWN: return "pad_down";
+			case SDL_EVENT_GAMEPAD_BUTTON_UP: return "pad_up";
+			case SDL_EVENT_JOYSTICK_AXIS_MOTION: return "joy_axis";
+			case SDL_EVENT_JOYSTICK_BUTTON_DOWN: return "joy_down";
+			case SDL_EVENT_JOYSTICK_BUTTON_UP: return "joy_up";
+			case SDL_EVENT_RENDER_DEVICE_RESET: return "render_device_reset";
+			case SDL_EVENT_WILL_ENTER_BACKGROUND: return "app_will_bg";
+			case SDL_EVENT_DID_ENTER_BACKGROUND: return "app_did_bg";
+			case SDL_EVENT_WILL_ENTER_FOREGROUND: return "app_will_fg";
+			case SDL_EVENT_DID_ENTER_FOREGROUND: return "app_did_fg";
+			case SDL_EVENT_USER: return "user";
+			default: return "other";
+
+		}
+
+	}
+
+	static void ProbeResolveEnabled () {
+
+		if (probeEnabled >= 0) return;
+
+		probeEnabled = 0;
+
+		const char* env = SDL_getenv ("SEIUN_FRAME_PROBE");
+
+		if (env && env[0] && env[0] != '0') probeEnabled = 1;
+
+		#ifdef ANDROID
+		if (!probeEnabled) {
+			char value[PROP_VALUE_MAX] = { 0 };
+			if (__system_property_get ("debug.seiun.frame_probe", value) > 0 && value[0] == '1') probeEnabled = 1;
+		}
+		#endif
+
+		if (probeEnabled) {
+
+			probeFrameStart = HiResMs ();
+			SDL_LogWarn (SDL_LOG_CATEGORY_APPLICATION, "[SEIUN] frame probe enabled");
+
+		}
+
+	}
+
+	static inline void ProbeCountEvent (Uint32 type) {
+
+		if (probeEnabled != 1) return;
+
+		probeEventCount++;
+		probeEventTotal++;
+
+		Uint16 smallType = (Uint16)type;
+
+		for (Uint32 i = 0; i < probeTypeKinds; i++) {
+			if (probeTypes[i] == smallType) {
+				probeTypeCounts[i]++;
+				return;
+			}
+		}
+
+		if (probeTypeKinds < (sizeof (probeTypes) / sizeof (probeTypes[0]))) {
+			probeTypes[probeTypeKinds] = smallType;
+			probeTypeCounts[probeTypeKinds] = 1;
+			probeTypeKinds++;
+		}
+
+	}
+
+	// Logs the environment the frame numbers were produced in: swap interval
+	// (the real vsync state, so it is verifiable instead of assumed), logical vs
+	// pixel window size (i.e. whether the backbuffer is at native device
+	// resolution, which is the fillrate question) and the panel refresh rate.
+	// Printed with every summary so ONE logcat capture can tell apart
+	// input-bound / engine-bound / pacing / too-many-pixels.
+	static void ProbeLogEnvironment () {
+
+		int windowCount = 0;
+		SDL_Window** windows = SDL_GetWindows (&windowCount);
+
+		if (!windows) return;
+
+		for (int i = 0; i < windowCount; i++) {
+
+			int width = 0;
+			int height = 0;
+			int pixelWidth = 0;
+			int pixelHeight = 0;
+
+			SDL_GetWindowSize (windows[i], &width, &height);
+			SDL_GetWindowSizeInPixels (windows[i], &pixelWidth, &pixelHeight);
+
+			const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode (SDL_GetDisplayForWindow (windows[i]));
+			double refresh = (mode && mode->refresh_rate > 0.0) ? mode->refresh_rate : 0.0;
+
+			int swapInterval = 0;
+			const char* vsync = SDL_GL_GetSwapInterval (&swapInterval) ? (swapInterval == 0 ? "off" : "on") : "n/a";
+
+			SDL_LogWarn (SDL_LOG_CATEGORY_APPLICATION,
+				"[SEIUN] env win=%dx%d pixel=%dx%d scale=%.2f refresh=%.0fHz vsync=%s(%d)",
+				width, height, pixelWidth, pixelHeight,
+				width > 0 ? (double)pixelWidth / (double)width : 1.0, refresh, vsync, swapInterval);
+
+		}
+
+		SDL_free (windows);
+
+	}
+
+
+	// Called once per frame, right after UPDATE + RENDER were dispatched.
+	static void ProbeLogFrame (double framePeriodMs, double drainMs, double workMs) {
+
+		if (probeEnabled != 1) return;
+
+		double now = HiResMs ();
+		double delta = now - probeFrameStart;
+
+		probeFrameStart = now;
+		probeDrainStart = now;
+		probeFrame++;
+
+		if (probeFrame <= 1) return; // discard warmup
+
+		probeDeltaSum += delta;
+		if (delta > probeDeltaMax) probeDeltaMax = delta;
+		if (drainMs > probeDrainMax) probeDrainMax = drainMs;
+		probeWorkSum += workMs;
+		if (workMs > probeWorkMax) probeWorkMax = workMs;
+
+		double budget = (framePeriodMs > 0.0) ? framePeriodMs : (1000.0 / 60.0);
+
+		double ratio = delta / budget;
+
+		probeHistogram[
+			ratio < 1.0 ? 0 :
+			ratio < 1.25 ? 1 :
+			ratio < 1.5 ? 2 :
+			ratio < 2.0 ? 3 :
+			ratio < 3.0 ? 4 :
+			ratio < 4.0 ? 5 :
+			ratio < 8.0 ? 6 : 7
+		]++;
+
+		if (delta > budget * 1.5) {
+
+			probeSlowFrames++;
+
+			// Throttle: at most one detailed dump per 30 frames so the probe
+			// itself cannot become the bottleneck on a device that is slow
+			// every frame.
+			if (probeDumps < 400 && (probeFrame - probeLastDumpFrame) >= 30) {
+
+				probeDumps++;
+				probeLastDumpFrame = probeFrame;
+
+				SDL_LogWarn (SDL_LOG_CATEGORY_APPLICATION,
+					"[SEIUN] slow frame=%llu delta=%.2fms budget=%.2fms drain=%.2fms work=%.2fms events=%u",
+					(unsigned long long)probeFrame, delta, budget, drainMs, workMs, (unsigned)probeEventCount);
+
+				for (Uint32 i = 0; i < probeTypeKinds; i++) {
+
+					SDL_LogWarn (SDL_LOG_CATEGORY_APPLICATION, "[SEIUN]   ev %s(type=0x%04X) x%u",
+						ProbeEventName (probeTypes[i]), (unsigned)probeTypes[i], (unsigned)probeTypeCounts[i]);
+
+				}
+
+				if (drainMs > budget * 0.5) {
+
+					SDL_LogWarn (SDL_LOG_CATEGORY_APPLICATION,
+						"[SEIUN]   -> event/input handling alone ate %.2fms of this frame", drainMs);
+
+				} else if (workMs > budget) {
+
+					SDL_LogWarn (SDL_LOG_CATEGORY_APPLICATION,
+						"[SEIUN]   -> UPDATE+RENDER alone took %.2fms (engine or GPU bound)", workMs);
+
+				}
+
+			}
+
+		}
+
+		if (probeFrame % 300 == 0) {
+
+			SDL_LogWarn (SDL_LOG_CATEGORY_APPLICATION,
+				"[SEIUN] summary frame=%llu budget=%.2fms avgDelta=%.2fms maxDelta=%.2fms maxDrain=%.2fms avgWork=%.2fms maxWork=%.2fms slow=%llu/%llu events=%llu hist=%u,%u,%u,%u,%u,%u,%u,%u",
+				(unsigned long long)probeFrame, budget, probeDeltaSum / (double)(probeFrame - 1), probeDeltaMax, probeDrainMax,
+				probeWorkSum / (double)(probeFrame - 1), probeWorkMax,
+				(unsigned long long)probeSlowFrames, (unsigned long long)probeFrame, (unsigned long long)probeEventTotal,
+				(unsigned)probeHistogram[0], (unsigned)probeHistogram[1], (unsigned)probeHistogram[2], (unsigned)probeHistogram[3],
+				(unsigned)probeHistogram[4], (unsigned)probeHistogram[5], (unsigned)probeHistogram[6], (unsigned)probeHistogram[7]);
+
+			ProbeLogEnvironment ();
+
+		}
+
+		probeEventCount = 0;
+		probeTypeKinds = 0;
+
+	}
+
 
 
 	SDLApplication::SDLApplication () {
@@ -145,6 +439,9 @@ namespace lime {
 
 		#endif
 
+		// SeiunEngine frame probe: account for every event that reaches Haxe.
+		ProbeCountEvent (event->type);
+
 		switch (event->type) {
 
 			case SDL_EVENT_USER:
@@ -164,8 +461,15 @@ namespace lime {
 
 					}
 
+					double probeRenderStart = HiResMs ();
+
 					ApplicationEvent::Dispatch (&applicationEvent);
 					RenderEvent::Dispatch (&renderEvent);
+
+					{
+						double probeWorkEnd = HiResMs ();
+						ProbeLogFrame (framePeriod, probeRenderStart - probeDrainStart, probeWorkEnd - probeRenderStart);
+					}
 
 				}
 
@@ -293,11 +597,13 @@ namespace lime {
 
 				ProcessWindowEvent (event);
 
-				if (!inBackground) {
-
-					RenderEvent::Dispatch (&renderEvent);
-
-				}
+				// SeiunEngine: do NOT force a render here. This event fires on
+				// every surface change (resume, IME show/hide, notification
+				// shade, rotation, popup) and the main loop already dispatches
+				// UPDATE + RENDER as soon as the frame is due. See
+				// RenderForWindowEvent() for why the unconditional render was a
+				// hitch source on mobile, and for the rollback lever.
+				RenderForWindowEvent ();
 
 				break;
 
@@ -306,11 +612,14 @@ namespace lime {
 
 				ProcessWindowEvent (event);
 
-				if (!inBackground) {
-
-					RenderEvent::Dispatch (&renderEvent);
-
-				}
+				// SeiunEngine: one Android surface change is reported as BOTH
+				// SDL_EVENT_WINDOW_RESIZED and SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED
+				// (lib/sdl3/src/events/SDL_windowevents.c -> SDL_OnWindowResized()
+				// -> SDL_CheckWindowPixelSizeChanged()), so the old unconditional
+				// render here presented two or three full frames - two
+				// eglSwapBuffers among them - inside a single main-loop
+				// iteration. Gate it on the frame schedule instead.
+				RenderForWindowEvent ();
 
 				break;
 
@@ -909,11 +1218,99 @@ namespace lime {
 	}
 
 
-	// Desktop uses wall-clock scheduling below; mobile/emscripten keep the old timer path.
+	// Dispatch UPDATE + RENDER because a window event (expose/resize) asked for
+	// one, but only when a frame is actually due.
+	//
+	// Why this exists: on Android a single surface change is reported as *two*
+	// SDL events. The Android backend posts SDL_EVENT_WINDOW_RESIZED, and SDL's
+	// own SDL_OnWindowResized() then calls SDL_CheckWindowPixelSizeChanged(),
+	// which posts SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED as well (see
+	// lib/sdl3/src/events/SDL_windowevents.c and lib/sdl3/src/video/SDL_video.c).
+	// The previous code dispatched a full RenderEvent for each of them, i.e. two
+	// or three presented frames - two eglSwapBuffers among them - inside one
+	// main-loop iteration. On a phone that is a visible hitch every time the
+	// window state changes (resume, IME show/hide, notification shade, rotation,
+	// a popup dialog), and it also runs the OpenFL stage render + framebuffer
+	// reallocation several times for the same resize.
+	//
+	// The main loop already dispatches UPDATE + RENDER whenever a frame is due,
+	// immediately after the event drain loop, so an immediate render is only
+	// needed when the event arrived *after* the frame became due. That is the
+	// only case handled here, and nextUpdate is advanced exactly the way
+	// Update() does it so the loop does not emit a second frame for the same
+	// period.
+	bool SDLApplication::RenderForWindowEvent () {
+
+		if (SeiunLegacyRenderEvents ()) {
+
+			// Rollback lever (debug.seiun.legacy_render_events=1): the pre-fix
+			// behaviour -- render immediately for every expose/resize event,
+			// even when a frame is not due. One Android surface change produces
+			// two of those events, so this is what presented 2-3 frames (and
+			// two or three eglSwapBuffers) inside a single main-loop iteration.
+			if (inBackground) return false;
+
+			RenderEvent::Dispatch (&renderEvent);
+			return true;
+
+		}
+
+		if (inBackground) return false;
+
+		double now = HiResMs ();
+
+		if (now < nextUpdate) return false;
+
+		#if defined(IPHONE) || defined(EMSCRIPTEN)
+		// The legacy path drives frames through SDL_EVENT_USER; cancel a timer
+		// that is already armed so it cannot push a second frame.
+		if (timerActive) {
+			SDL_RemoveTimer (timerID);
+			timerActive = false;
+			timerID = 0;
+		}
+		#endif
+
+		int catchup = 0;
+
+		do {
+			nextUpdate += framePeriod;
+			catchup++;
+		} while (nextUpdate <= now && catchup < 4);
+
+		if (catchup >= 4) {
+			nextUpdate = now + framePeriod;
+		}
+
+		applicationEvent.type = UPDATE;
+		applicationEvent.deltaTime = now - lastUpdate;
+		lastUpdate = now;
+
+		double probeRenderStart = HiResMs ();
+
+		ApplicationEvent::Dispatch (&applicationEvent);
+		RenderEvent::Dispatch (&renderEvent);
+
+		{
+			double probeWorkEnd = HiResMs ();
+			ProbeLogFrame (framePeriod, probeRenderStart - probeDrainStart, probeWorkEnd - probeRenderStart);
+		}
+
+		return true;
+
+	}
+
+
+	// Android is NOT in the IPHONE/EMSCRIPTEN branch below, so Android uses the
+	// wall-clock scheduler. The probe and the resize gating above both rely on
+	// that.
 	bool SDLApplication::Update () {
 
 		SDL_Event event;
 		event.type = -1;
+
+		ProbeResolveEnabled ();
+		probeDrainStart = HiResMs ();
 
 		#if (!defined (IPHONE) && !defined (EMSCRIPTEN))
 
@@ -931,6 +1328,10 @@ namespace lime {
 				return active;
 
 		}
+
+		// SeiunEngine frame probe: how much of this frame was spent merely
+		// absorbing input events, before the engine was even called.
+		double probeDrainEnd = HiResMs ();
 
 		currentUpdate = HiResMs ();
 
@@ -960,14 +1361,30 @@ namespace lime {
 			ApplicationEvent::Dispatch (&applicationEvent);
 			RenderEvent::Dispatch (&renderEvent);
 
+			{
+				double probeWorkEnd = HiResMs ();
+				ProbeLogFrame (framePeriod, probeDrainEnd - probeDrainStart, probeWorkEnd - probeDrainEnd);
+			}
+
 		} else if (!inBackground && nextUpdate > currentUpdate) {
 
 			double remainMs = nextUpdate - currentUpdate;
 
-			if (remainMs > 3.0) {
+			// SeiunEngine: with the vsync diagnostic lever on, the DISPLAY is the
+			// frame pacer - eglSwapBuffers already blocks until the next vblank -
+			// so the sub-3ms NS-sleep + busy spin below would just burn CPU
+			// before blocking in the swap anyway, and would leave lime's
+			// scheduler and the panel both trying to align the same frame. Hand
+			// the whole remainder to the event wait instead. With the lever off
+			// this branch is unchanged (default behaviour).
+			bool displayPaced = SeiunForceVSync ();
+
+			if (remainMs > 3.0 || displayPaced) {
 
 				// Long wait: timed event wait keeps input responsive.
 				int timeout = (int) (remainMs - 2.0);
+
+				if (displayPaced && timeout < 1) timeout = 1;
 
 				if (timeout > 0 && WaitEventTimeout (&event, timeout)) {
 
