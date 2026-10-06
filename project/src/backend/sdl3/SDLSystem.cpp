@@ -777,9 +777,35 @@ namespace lime {
 		#else
 
 		FILE* result;
-		std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-		std::wstring* wfilename = new std::wstring (converter.from_bytes (filename));
-		std::wstring* wmode = new std::wstring (converter.from_bytes (mode));
+		// SeiunEngine fork: from_bytes 遇到非法 UTF-8 会抛 std::range_error，
+		// 在 ndll 里没有任何 Haxe try/catch 能接住，直接终止进程；退化为
+		// 逐字节加宽至少能让 _wfopen 尝试打开原路径。
+		std::wstring* wfilename = 0;
+		std::wstring* wmode = new std::wstring (mode, mode + strlen (mode));
+
+		try {
+
+			std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+			wfilename = new std::wstring (converter.from_bytes (filename));
+
+		} catch (...) {
+
+			delete wmode;
+			wmode = 0;
+
+			System::GCEnterBlocking ();
+			result = ::fopen (filename, mode);
+			System::GCExitBlocking ();
+
+			if (result) {
+
+				return new FILE_HANDLE (result, true);
+
+			}
+
+			return NULL;
+
+		}
 
 		System::GCEnterBlocking ();
 		result = ::_wfopen (wfilename->c_str(), wmode->c_str());

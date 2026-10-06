@@ -133,17 +133,81 @@ namespace lime {
 	}
 
 
+	// SeiunEngine fork ---------------------------------------------------------
+	// hxcpp 4.3 的 "smart strings"：Haxe 字符串的底层缓冲按内容选编码——纯 ASCII 存
+	// 字节，含非 ASCII 则存 UTF-16，编码标志（HX_GC_STRING_CHAR16_T = 0x00200000，
+	// 见 hxcpp include/hx/GC.h）放在缓冲前一个 GC 头部字里。PRIME 边界零拷贝传
+	// 原始缓冲，所以 HxString::c_str() 只有对 ASCII 才恰好等于 UTF-8；直接当
+	// UTF-8 解释会让中文路径/标题变成 UTF-16LE 字节流——轻则乱码
+	// （"电蝴蝶" -> "5ut‡v‡"），重则 codecvt 抛 std::range_error 击穿 CFFI 边界
+	// 终止进程（0xE06D7363 原生崩溃）。所有 HxString -> char* 的路径都必须经过这里。
+	static std::string hxs_to_utf8 (const HxString &val) {
+
+		const char *s = val.c_str ();
+
+		if (!s || val.length <= 0) return std::string ();
+
+		if ((((const unsigned int *)s)[-1] & 0x00200000u)) {
+
+			// 缓冲是 char16_t 序列（Windows 上 wchar_t 同为 2 字节）
+			const char16_t *u16 = (const char16_t *)s;
+
+			try {
+
+				std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> converter;
+				return converter.to_bytes (u16, u16 + val.length);
+
+			} catch (...) {
+
+				// 未配对代理项等极端输入：逐字节退化，保证不抛
+				std::string out;
+				out.reserve (val.length);
+				for (int i = 0; i < val.length; i++) out.push_back ((char)u16[i]);
+				return out;
+
+			}
+
+		}
+
+		return std::string (s);
+
+	}
+
+
+	// SeiunEngine fork ---------------------------------------------------------
+	// codecvt::from_bytes 抛出的 std::range_error 无法跨越 CFFI 边界被 Haxe 捕获，
+	// 会直接终止进程（native_crash_*.txt 里的 0xE06D7363 就是这个形态）。输入可能
+	// 来自任意 Haxe 字符串（hxcpp 会给未配对的代理项编出非法 UTF-8），所以和
+	// FileDialog.cpp 的 wstring_to_utf8 一样必须自吞异常、退化为逐字节转换。
+	static std::wstring* utf8_to_wstring_protected (const std::string& _val) {
+
+		#ifdef HX_WINDOWS
+
+		try {
+
+			std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+			return new std::wstring (converter.from_bytes (_val));
+
+		} catch (...) {
+
+			return new std::wstring (_val.begin (), _val.end ());
+
+		}
+
+		#else
+
+		return new std::wstring (_val.begin (), _val.end ());
+
+		#endif
+
+	}
+
+
 	std::wstring* hxstring_to_wstring (HxString val) {
 
 		if (val.c_str ()) {
 
-			std::string _val = std::string (val.c_str ());
-			#ifdef HX_WINDOWS
-			std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-			return new std::wstring (converter.from_bytes (_val));
-			#else
-			return new std::wstring (_val.begin (), _val.end ());
-			#endif
+			return utf8_to_wstring_protected (hxs_to_utf8 (val));
 
 		} else {
 
@@ -158,13 +222,7 @@ namespace lime {
 
 		if (val) {
 
-			std::string _val = std::string (hl_to_utf8 (val->bytes));
-			#ifdef HX_WINDOWS
-			std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-			return new std::wstring (converter.from_bytes (_val));
-			#else
-			return new std::wstring (_val.begin (), _val.end ());
-			#endif
+			return utf8_to_wstring_protected (std::string (hl_to_utf8 (val->bytes)));
 
 		} else {
 
@@ -473,7 +531,8 @@ namespace lime {
 	value lime_bytes_read_file (HxString path, value bytes) {
 
 		Bytes data (bytes);
-		data.ReadFile (path.c_str ());
+		std::string _path = hxs_to_utf8 (path);
+		data.ReadFile (_path.c_str ());
 		return data.Value (bytes);
 
 	}
@@ -573,7 +632,7 @@ namespace lime {
 
 	void lime_clipboard_set_text (HxString text) {
 
-		Clipboard::SetText (text.c_str ());
+		Clipboard::SetText (hxs_to_utf8 (text).c_str ());
 
 	}
 
@@ -1126,7 +1185,7 @@ namespace lime {
 
 		#ifdef LIME_FREETYPE
 		Font *font = (Font*)val_data (fontHandle);
-		return font->GetGlyphIndex ((char*)character.c_str ());
+		return font->GetGlyphIndex ((char*)hxs_to_utf8 (character).c_str ());
 		#else
 		return -1;
 		#endif
@@ -1150,7 +1209,7 @@ namespace lime {
 
 		#ifdef LIME_FREETYPE
 		Font *font = (Font*)val_data (fontHandle);
-		return (value)font->GetGlyphIndices (true, (char*)characters.c_str ());
+		return (value)font->GetGlyphIndices (true, (char*)hxs_to_utf8 (characters).c_str ());
 		#else
 		return alloc_null ();
 		#endif
@@ -2327,7 +2386,8 @@ namespace lime {
 	value lime_jpeg_decode_file (HxString path, bool decodeData, value buffer) {
 
 		ImageBuffer imageBuffer (buffer);
-		Resource resource = Resource (path.c_str ());
+		std::string _path = hxs_to_utf8 (path);
+		Resource resource = Resource (_path.c_str ());
 
 		#ifdef LIME_JPEG
 		if (JPEG::Decode (&resource, &imageBuffer, decodeData)) {
@@ -2520,7 +2580,7 @@ namespace lime {
 	void lime_neko_execute (HxString module) {
 
 		#ifdef LIME_NEKO
-		NekoVM::Execute (module.c_str ());
+		NekoVM::Execute (hxs_to_utf8 (module).c_str ());
 		#endif
 
 	}
@@ -2565,7 +2625,8 @@ namespace lime {
 	value lime_png_decode_file (HxString path, bool decodeData, value buffer) {
 
 		ImageBuffer imageBuffer (buffer);
-		Resource resource = Resource (path.c_str ());
+		std::string _path = hxs_to_utf8 (path);
+		Resource resource = Resource (_path.c_str ());
 
 		#ifdef LIME_PNG
 		if (PNG::Decode (&resource, &imageBuffer, decodeData)) {
@@ -2733,7 +2794,7 @@ namespace lime {
 
 	value lime_system_get_directory (int type, HxString company, HxString title) {
 
-		std::wstring* path = System::GetDirectory ((SystemDirectory)type, company.c_str (), title.c_str ());
+		std::wstring* path = System::GetDirectory ((SystemDirectory)type, hxs_to_utf8 (company).c_str (), hxs_to_utf8 (title).c_str ());
 
 		if (path) {
 
@@ -2996,7 +3057,7 @@ namespace lime {
 	void lime_system_open_file (HxString path) {
 
 		#ifdef IPHONE
-		System::OpenFile (path.c_str ());
+		System::OpenFile (hxs_to_utf8 (path).c_str ());
 		#endif
 
 	}
@@ -3014,7 +3075,7 @@ namespace lime {
 	void lime_system_open_url (HxString url, HxString target) {
 
 		#ifdef IPHONE
-		System::OpenURL (url.c_str (), target.c_str ());
+		System::OpenURL (hxs_to_utf8 (url).c_str (), hxs_to_utf8 (target).c_str ());
 		#endif
 
 	}
@@ -3100,7 +3161,7 @@ namespace lime {
 	void lime_window_alert (value window, HxString message, HxString title) {
 
 		Window* targetWindow = (Window*)val_data (window);
-		targetWindow->Alert (message.c_str (), title.c_str ());
+		targetWindow->Alert (hxs_to_utf8 (message).c_str (), hxs_to_utf8 (title).c_str ());
 
 	}
 
@@ -3187,7 +3248,7 @@ namespace lime {
 
 	value lime_window_create (value application, int width, int height, int flags, HxString title) {
 
-		Window* window = CreateWindow ((Application*)val_data (application), width, height, flags, title.c_str ());
+		Window* window = CreateWindow ((Application*)val_data (application), width, height, flags, hxs_to_utf8 (title).c_str ());
 		return CFFIPointer (window, gc_window);
 
 	}
@@ -3688,13 +3749,14 @@ namespace lime {
 	value lime_window_set_title (value window, HxString title) {
 
 		Window* targetWindow = (Window*)val_data (window);
-		const char* result = targetWindow->SetTitle (title.c_str ());
+		std::string _title = hxs_to_utf8 (title);
+		const char* result = targetWindow->SetTitle (_title.c_str ());
 
 		if (result) {
 
 			value _result = alloc_string (result);
 
-			if (result != title.c_str ()) {
+			if (result != _title.c_str ()) {
 
 				free ((char*) result);
 

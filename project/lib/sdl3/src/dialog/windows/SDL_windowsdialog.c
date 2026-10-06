@@ -25,6 +25,7 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shlobj.h>
+#include <objbase.h>  /* SeiunEngine fork: CoInitializeEx for the dialog threads */
 #include "../../core/windows/SDL_windows.h"
 #include "../../thread/SDL_systhread.h"
 
@@ -204,20 +205,40 @@ void windows_ShowFileDialog(void *ptr)
         }
     }
 
+    /* SeiunEngine fork ---------------------------------------------------------
+       Upstream leaves this struct uninitialised.  Runtime A/B captures showed the
+       never-assigned members coming through as stack garbage: nMaxFileTitle held
+       3508533216 / 2106587216 / 491780128 on three runs, and pvReserved held
+       leftover UTF-16 text ("s.e.d").  MSDN requires pvReserved to be NULL and
+       dwReserved to be 0, so zero the whole struct before filling it in. */
     OPENFILENAMEW dialog;
+    SDL_memset(&dialog, 0, sizeof(dialog));
     dialog.lStructSize = sizeof(OPENFILENAME);
     dialog.hwndOwner = window;
     dialog.hInstance = 0;
     dialog.lpstrFilter = filter_wchar;
     dialog.lpstrCustomFilter = NULL;
     dialog.nMaxCustFilter = 0;
-    dialog.nFilterIndex = 0;
+    /* nFilterIndex is 1-based and 0 means "no filter selected"; upstream's 0 left
+       the File Types control with nothing chosen.  Select the first group whenever
+       one was supplied. */
+    dialog.nFilterIndex = filter_wchar ? 1 : 0;
     dialog.lpstrFile = filebuffer;
     dialog.nMaxFile = SELECTLIST_SIZE;
     dialog.lpstrFileTitle = NULL;
+    dialog.nMaxFileTitle = _MAX_FNAME + _MAX_EXT;
     dialog.lpstrInitialDir = *initfolder ? initfolder : NULL;
     dialog.lpstrTitle = title_w;
-    dialog.Flags = flags | OFN_EXPLORER | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
+    /* SeiunEngine fork ---------------------------------------------------------
+       Upstream omits OFN_OVERWRITEPROMPT, so GetSaveFileName() replaces an existing
+       file without asking.  tinyfiledialogs -- the backend this replaced -- set it,
+       and lime's editors save over existing charts/characters constantly.
+       Runtime A/B at the comdlg32 boundary: old flags 0x0000000A
+       [OVERWRITEPROMPT|NOCHANGEDIR] -> new 0x0008000C [HIDEREADONLY|NOCHANGEDIR|
+       EXPLORER]; with the old flags Windows raises its overwrite confirmation,
+       with the new ones the dialog closes and returns TRUE straight away. */
+    dialog.Flags = flags | OFN_EXPLORER | OFN_HIDEREADONLY | OFN_NOCHANGEDIR
+                 | (is_save ? OFN_OVERWRITEPROMPT : 0);
     dialog.nFileOffset = 0;
     dialog.nFileExtension = 0;
     dialog.lpstrDefExt = NULL;
@@ -377,8 +398,20 @@ void windows_ShowFileDialog(void *ptr)
 
 int windows_file_dialog_thread(void *ptr)
 {
+    /* SeiunEngine fork: the common dialogs are shell UI and want COM initialised on
+       the thread that shows them.  tinyfiledialogs (the backend this replaced) always
+       did CoInitializeEx first; upstream SDL does not, so this thread reported
+       CO_E_NOTINITIALIZED (0x800401F0) at the comdlg32 boundary.  MTA mirrors what
+       tinyfiledialogs used for the file dialogs. */
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+
     windows_ShowFileDialog(ptr);
     freeWinArgs(ptr);
+
+    if (hr == S_OK || hr == S_FALSE) {
+        CoUninitialize();
+    }
+
     return 0;
 }
 
@@ -453,8 +486,18 @@ void windows_ShowFolderDialog(void *ptr)
 
 int windows_folder_dialog_thread(void *ptr)
 {
+    /* SeiunEngine fork: same COM-init fix as windows_file_dialog_thread, but the
+       folder browser is an STA control, which is what tinyfiledialogs used for
+       SHBrowseForFolderW. */
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+
     windows_ShowFolderDialog(ptr);
     freeWinFArgs((winFArgs *)ptr);
+
+    if (hr == S_OK || hr == S_FALSE) {
+        CoUninitialize();
+    }
+
     return 0;
 }
 

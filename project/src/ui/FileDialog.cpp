@@ -6,6 +6,7 @@
 
 #if defined(LIME_SDL3) && !defined(HX_MACOS)
 
+#include <algorithm>
 #include <codecvt>
 #include <locale>
 #include <SDL3/SDL.h>
@@ -50,7 +51,14 @@ namespace lime {
 		SDL_Condition* condition;
 		bool completed;
 		bool error;
+		// 调用方是否要求一个「所有文件」兜底分组（openfl 把 FileFilter('All Files','*.*')
+		// 渲染成一个孤立的 "."，lime 自己的 API 则可能给 "*" 或 "*.*"）。
+		bool allFiles;
 		std::vector<std::string> patterns;
+		// 合成后的分组 pattern（分号分隔）与分组名。SDL 只保存指针，所以这两份数据必须
+		// 存在 state 里、活到回调触发，不能用局部临时对象。
+		std::string filterPattern;
+		std::string filterName;
 		std::vector<SDL_DialogFileFilter> filters;
 		std::vector<std::string> files;
 
@@ -133,8 +141,9 @@ namespace lime {
 
 	// lime 的 filter 参数是逗号/分号分隔的扩展名串（openfl 传的是分号分隔，可能带 "*." 前缀）。
 	// SDL 只接受 [a-zA-Z0-9_.-] 组成的分号列表，或整串单个 "*"（SDL_dialog_utils.c:231-256）。
-	static void parse_filters (std::wstring* filter, std::vector<std::string>& patterns) {
+	static void parse_filters (std::wstring* filter, SDLFileDialogState* state) {
 
+		std::vector<std::string>& patterns = state->patterns;
 		std::string raw = wstring_to_utf8 (filter);
 		std::string token;
 
@@ -161,22 +170,29 @@ namespace lime {
 
 			if (pattern.size () == 0) continue;
 
-			if (pattern == "*") {
-
-				// 单个 "*" 表示全部文件：SDL 要求它必须是整串，不能与其他 pattern 混用
-				patterns.clear ();
-				return;
-
-			}
-
-			// 去掉 "*." / "*" / "." 前缀（单独的 "*" 已在上方按全部文件处理）
+			// 去掉 "*." / "*" / "." 前缀。openfl 的 __getFilterTypes 会把
+			// FileFilter('All Files', '*.*') 变成孤立的 "."，所以三者都表示「所有文件」。
+			// 旧 tinyfiledialogs 实现无论调用方有没有要求，都会追加一个 All Files 分组
+			// （tinyfiledialogs.c:1158）；这里显式记录下来，由 init_state 生成一个独立的
+			// { "All Files", "*" } 分组（SDL 会负责把 "*" 转成 "*.*"）。
 			while (pattern.size () > 0 && (pattern[0] == '*' || pattern[0] == '.')) {
 
 				pattern = pattern.substr (1);
 
 			}
 
-			if (pattern.size () > 0) patterns.push_back (pattern);
+			if (pattern.size () == 0) {
+
+				state->allFiles = true;
+				continue;
+
+			}
+
+			if (std::find (patterns.begin (), patterns.end (), pattern) == patterns.end ()) {
+
+				patterns.push_back (pattern);
+
+			}
 
 		}
 
@@ -189,17 +205,49 @@ namespace lime {
 		state->condition = 0;
 		state->completed = false;
 		state->error = false;
+		state->allFiles = false;
 
-		parse_filters (filter, state->patterns);
+		parse_filters (filter, state);
 
 		// SDL_DialogFileFilter::pattern 必须活到回调触发（SDL_dialog.h:142-145），
-		// 因此指向 state->patterns 内部、且此后不再修改该 vector。
 		// name 必须非 NULL：SDL 的 Windows/zenity/cocoa 后端都会 SDL_strdup(filter.name)。
-		for (std::size_t i = 0; i < state->patterns.size (); i++) {
+		//
+		// SDL 的 pattern 是「分号分隔的扩展名列表」，一个 SDL_DialogFileFilter 就是下拉框里
+		// 的一个分组。原实现为每个扩展名各建一个分组、且名字都写死 "Files"，于是引擎里
+		// [FileFilter('Chart Files','json;osu;mc;osz;mcz'), FileFilter('All Files','*.*')]
+		// （NewChartingState.hx:5521）会让下拉框出现 5 个一模一样的 "Files"，而 "All Files"
+		// 兜底项消失。这里改成一个分组承载全部扩展名，再按需追加 All Files。
+		//
+		// 分组名沿用 Windows 惯例：openfl 桌面端只把扩展名传过来（FileReference.save
+		// 没有 filter 参数），语义名称早已丢失，所以用 "*.json" / "*.json;*.osu" 这种
+		// 模式串当名字，而不是没有信息量的 "Files"。
+		if (state->patterns.size () > 0) {
+
+			for (std::size_t i = 0; i < state->patterns.size (); i++) {
+
+				if (i > 0) {
+					state->filterName += ';';
+					state->filterPattern.push_back (';');
+				}
+
+				state->filterName += "*." + state->patterns[i];
+				state->filterPattern += state->patterns[i];
+
+			}
 
 			SDL_DialogFileFilter entry;
-			entry.name = "Files";
-			entry.pattern = state->patterns[i].c_str ();
+			entry.name = state->filterName.c_str ();
+			entry.pattern = state->filterPattern.c_str ();
+			state->filters.push_back (entry);
+
+		}
+
+		if (state->allFiles) {
+
+			// pattern 必须是整串单个 "*"（SDL_dialog_utils.c:233/178）
+			SDL_DialogFileFilter entry;
+			entry.name = "All Files (*.*)";
+			entry.pattern = "*";
 			state->filters.push_back (entry);
 
 		}
