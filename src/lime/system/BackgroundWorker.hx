@@ -2,6 +2,7 @@ package lime.system;
 
 import lime.app.Application;
 import lime.app.Event;
+import lime.utils.Log;
 #if sys
 #if haxe4
 import sys.thread.Deque;
@@ -137,6 +138,13 @@ class BackgroundWorker
 
 		if (message != null)
 		{
+			// SeiunEngine fork ---------------------------------------------------
+			// 这里跑在 lime 主循环（Application.onUpdate）里：onError/onComplete 的监听方
+			// （openfl FileReference 的保存回调会在其中执行 File.saveBytes 等可抛异常的
+			// 操作）一旦抛出 Haxe 异常，会穿过 ndll 的所有分发帧、找不到任何 Haxe
+			// try/catch，最终以未捕获 C++ 异常（0xE06D7363）终止整个进程。
+			// 因此在 dispatch 处就地兜底：吞掉、记录、并保证 canceled 语义不变
+			// （仍然移除监听、只派发一次），让游戏继续运行而不是崩溃。
 			if (message == MESSAGE_ERROR)
 			{
 				Application.current.onUpdate.remove(__update);
@@ -144,7 +152,15 @@ class BackgroundWorker
 				if (!canceled)
 				{
 					canceled = true;
-					onError.dispatch(__messageQueue.pop(false));
+
+					try
+					{
+						onError.dispatch(__messageQueue.pop(false));
+					}
+					catch (e:Dynamic)
+					{
+						Log.error('BackgroundWorker onError handler failed: ${Std.string(e)}');
+					}
 				}
 			}
 			else if (message == MESSAGE_COMPLETE)
@@ -154,14 +170,29 @@ class BackgroundWorker
 				if (!canceled)
 				{
 					canceled = true;
-					onComplete.dispatch(__messageQueue.pop(false));
+
+					try
+					{
+						onComplete.dispatch(__messageQueue.pop(false));
+					}
+					catch (e:Dynamic)
+					{
+						Log.error('BackgroundWorker onComplete handler failed: ${Std.string(e)}');
+					}
 				}
 			}
 			else
 			{
 				if (!canceled)
 				{
-					onProgress.dispatch(message);
+					try
+					{
+						onProgress.dispatch(message);
+					}
+					catch (e:Dynamic)
+					{
+						Log.error('BackgroundWorker onProgress handler failed: ${Std.string(e)}');
+					}
 				}
 			}
 		}
