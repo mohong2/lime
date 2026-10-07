@@ -32,6 +32,12 @@
 
 #ifdef _WIN32
 #  include <stddef.h>
+#else
+   /* zlib 1.3.1 的 gzguts.h 不再包含 <unistd.h>，但 gzlib/gzread/gzwrite 仍直接
+      调用 POSIX 的 open/read/write/close/lseek；新版 Apple clang（Xcode 15+）
+      把隐式函数声明按错误处理，非 Windows 平台必须显式拿到声明（1.2.8 版此处
+      就是这样写的）。 */
+#  include <unistd.h>
 #endif
 
 #if defined(__TURBOC__) || defined(_MSC_VER) || defined(_WIN32)
