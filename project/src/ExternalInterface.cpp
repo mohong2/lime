@@ -48,10 +48,11 @@
 #include <utils/compress/Zlib.h>
 #include <vm/NekoVM.h>
 
-#ifdef HX_WINDOWS
+// hxs_to_utf8 在所有平台都编译并使用 wstring_convert/codecvt_utf8_utf16，这两个
+// 头必须无条件包含：libc++（macOS/iOS）不会经其他标准头间接提供 <codecvt>，
+// 只有 HX_WINDOWS 才包含会让非 Windows 平台直接编译失败。
 #include <locale>
 #include <codecvt>
-#endif
 
 #include <cstdlib>
 
