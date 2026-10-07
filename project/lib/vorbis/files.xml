@@ -63,6 +63,9 @@
 
 
 		<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/vorbis/include/"/>
+		<!-- vorbis 1.3.7 的 modes/setup_*.h 用跨目录引号包含 "#include modes/floor_all.h"，
+		     相对包含目录自身解析不到，必须像上游 autotools 一样给 -I 指到 lib/ -->
+		<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/vorbis/lib/"/>
 		<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/ogg/include/"/>
 		
 		<file name="${NATIVE_TOOLKIT_PATH}/vorbis/lib/mdct.c"/>
