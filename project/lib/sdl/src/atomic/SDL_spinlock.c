@@ -119,7 +119,7 @@ SDL_AtomicTryLock(SDL_SpinLock *lock)
 
 #elif defined(__MACOSX__) || defined(__IPHONEOS__)
     /* Maybe used for PowerPC, but the Intel asm or gcc atomics are favored. */
-    return OSAtomicCompareAndSwap32Barrier(0, 1, lock);
+    return (__sync_lock_test_and_set(lock, 1) == 0); /* OSAtomic is deprecated since 10.12 and recent Apple SDKs no longer declare it; arm64 has no inline-asm branch above, so use the same builtin SDL uses for HAVE_GCC_ATOMICS. */
 
 #elif defined(__SOLARIS__) && defined(_LP64)
     /* Used for Solaris with non-gcc compilers. */
