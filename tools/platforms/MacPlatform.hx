@@ -395,8 +395,10 @@ class MacPlatform extends PlatformTarget
 		else if (targetFlags.exists("arm64"))
 		{
 			// Native Apple Silicon build. HXCPP_M64 must not be passed here: hxcpp
-			// only derives "-arch arm64" and the "MacArm64" output directory from
-			// HXCPP_ARM64, so M64 would silently produce an x86_64 ndll.
+			// only derives "-arch arm64" from HXCPP_ARM64, so M64 would silently
+			// produce an x86_64 ndll. Object files stay arm64-specific
+			// (obj/darwinarm64) while the ndll lands in ndll/Mac64, which is where
+			// both lime and the host tools look for 64-bit macOS libraries.
 			commands.push(["-Dmac", "-DHXCPP_CLANG", "-DHXCPP_ARM64"]);
 		}
 		else
