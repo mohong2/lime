@@ -480,7 +480,10 @@ class IOSPlatform extends PlatformTarget
 		var armv7s = (project.architectures.indexOf(Architecture.ARMV7S) > -1 && !project.targetFlags.exists("simulator"));
 		var arm64 = (command == "rebuild"
 			|| (project.architectures.indexOf(Architecture.ARM64) > -1 && !project.targetFlags.exists("simulator")));
-		var i386 = (command == "rebuild" || project.targetFlags.exists("simulator"));
+		// Xcode 15 and later no longer ship an i386 simulator slice, so an
+		// unconditional rebuild pass for it can no longer link; only build it when
+		// it is explicitly requested through the architecture flags.
+		var i386 = (project.architectures.indexOf(Architecture.X86) > -1 && project.targetFlags.exists("simulator"));
 		var x86_64 = (command == "rebuild" || project.targetFlags.exists("simulator"));
 
 		var arc = (project.targetFlags.exists("arc"));
@@ -800,6 +803,11 @@ class IOSPlatform extends PlatformTarget
 
 			if (arch == "arm64" && !context.ARM64) continue;
 
+			// Device builds do not link simulator slices, so they must not require
+			// them: a rebuild for the device architecture does not produce
+			// liblime.iphonesim.a, and looking for it below aborted the whole build.
+			if ((arch == "i386" || arch == "x86_64") && !project.targetFlags.exists("simulator")) continue;
+
 			var libExt = [
 				".iphoneos.a",
 				".iphoneos-v7.a",
@@ -825,6 +833,16 @@ class IOSPlatform extends PlatformTarget
 				{
 					releaseLib = NDLL.getLibraryPath(ndll, "iPhone", "lib", ".iphoneos.a");
 					debugLib = NDLL.getLibraryPath(ndll, "iPhone", "lib", ".iphoneos.a", true);
+				}
+
+				if (!FileSystem.exists(releaseLib))
+				{
+					// A rebuild does not have to produce every slice (for example a
+					// simulator library when only device defines were built). Skip
+					// the missing one instead of failing the build; the generated
+					// Xcode project only links the slices that exist.
+					Log.warn("", "Skipping missing iOS library \"" + releaseLib + "\"");
+					continue;
 				}
 
 				System.copyIfNewer(releaseLib, releaseDest);

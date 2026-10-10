@@ -164,6 +164,17 @@ class MacPlatform extends PlatformTarget
 		executablePath = executableDirectory + "/" + project.app.file;
 	}
 
+	private function getNdllDirectory():String
+	{
+		// hxcpp writes native Apple Silicon binaries into ndll/MacArm64
+		if (targetFlags.exists("arm64"))
+		{
+			return "MacArm64";
+		}
+
+		return "Mac" + (is64 ? "64" : "");
+	}
+
 	public override function build():Void
 	{
 		var hxml = targetDirectory + "/haxe/" + buildType + ".hxml";
@@ -179,11 +190,11 @@ class MacPlatform extends PlatformTarget
 				// TODO: Support single binary for HashLink
 				if (targetType == "hl")
 				{
-					ProjectHelper.copyLibrary(project, ndll, "Mac" + (is64 ? "64" : ""), "", ".hdll", executableDirectory, project.debug, targetSuffix);
+					ProjectHelper.copyLibrary(project, ndll, getNdllDirectory(), "", ".hdll", executableDirectory, project.debug, targetSuffix);
 				}
 				else
 				{
-					ProjectHelper.copyLibrary(project, ndll, "Mac" + (is64 ? "64" : ""), "",
+					ProjectHelper.copyLibrary(project, ndll, getNdllDirectory(), "",
 						(ndll.haxelib != null
 							&& (ndll.haxelib.name == "hxcpp" || ndll.haxelib.name == "hxlibc")) ? ".dll" : ".ndll", executableDirectory,
 						project.debug, targetSuffix);
@@ -264,7 +275,13 @@ class MacPlatform extends PlatformTarget
 			var haxeArgs = [hxml, "-D", "HXCPP_CLANG"];
 			var flags = ["-DHXCPP_CLANG"];
 
-			if (is64)
+			if (targetFlags.exists("arm64"))
+			{
+				haxeArgs.push("-D");
+				haxeArgs.push("HXCPP_ARM64");
+				flags.push("-DHXCPP_ARM64");
+			}
+			else if (is64)
 			{
 				haxeArgs.push("-D");
 				haxeArgs.push("HXCPP_M64");
@@ -377,6 +394,13 @@ class MacPlatform extends PlatformTarget
 			// TODO: Support single binary
 			commands.push(["-Dmac", "-DHXCPP_CLANG", "-DHXCPP_M64", "-Dhashlink"]);
 		}
+		else if (targetFlags.exists("arm64"))
+		{
+			// Native Apple Silicon build. HXCPP_M64 must not be passed here: hxcpp
+			// only derives "-arch arm64" and the "MacArm64" output directory from
+			// HXCPP_ARM64, so M64 would silently produce an x86_64 ndll.
+			commands.push(["-Dmac", "-DHXCPP_CLANG", "-DHXCPP_ARM64"]);
+		}
 		else
 		{
 			if (!targetFlags.exists("32") && (command == "rebuild" || System.hostArchitecture == X64))
@@ -455,7 +479,7 @@ class MacPlatform extends PlatformTarget
 
 				if (ndll.path == null || ndll.path == "")
 				{
-					context.ndlls[i].path = NDLL.getLibraryPath(ndll, "Mac" + (is64 ? "64" : ""), "lib", ".a", project.debug);
+					context.ndlls[i].path = NDLL.getLibraryPath(ndll, getNdllDirectory(), "lib", ".a", project.debug);
 				}
 			}
 		}

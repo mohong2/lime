@@ -35,67 +35,17 @@ class RunScript
 
 		if (!rebuildBinaries) return;
 
-		var platforms = ["Windows", "Mac", "Mac64", "Linux", "Linux64"];
-
-		for (platform in platforms)
-		{
-			var source = Path.combine(limeDirectory, "ndll/" + platform + "/lime.ndll");
-			// var target = Path.combine (toolsDirectory, "ndll/" + platform + "/lime.ndll");
-
-			if (!FileSystem.exists(source))
-			{
-				var args = ["tools/tools.n", "rebuild", "lime", "-release", "-nocffi"];
-
-				if (Log.verbose)
-				{
-					args.push("-verbose");
-				}
-
-				if (!Log.enableColor)
-				{
-					args.push("-nocolor");
-				}
-
-				switch (platform)
-				{
-					case "Windows":
-						if (System.hostPlatform == WINDOWS)
-						{
-							System.runCommand(limeDirectory, "neko", args.concat(["windows", toolsDirectory]));
-						}
-
-					case "Mac", "Mac64":
-						if (System.hostPlatform == MAC)
-						{
-							System.runCommand(limeDirectory, "neko", args.concat(["mac", toolsDirectory]));
-						}
-
-					case "Linux":
-						if (System.hostPlatform == LINUX && System.hostArchitecture != X64)
-						{
-							System.runCommand(limeDirectory, "neko", args.concat(["linux", "-32", toolsDirectory]));
-						}
-
-					case "Linux64":
-						if (System.hostPlatform == LINUX && System.hostArchitecture == X64)
-						{
-							System.runCommand(limeDirectory, "neko", args.concat(["linux", "-64", toolsDirectory]));
-						}
-				}
-			}
-
-			if (!FileSystem.exists(source))
-			{
-				if (Log.verbose)
-				{
-					Log.warn("", "Source path \"" + source + "\" does not exist");
-				}
-			}
-			else
-			{
-				// System.copyIfNewer (source, target);
-			}
-		}
+		// NOTE: the host lime.ndll is intentionally NOT rebuilt here.
+		//
+		// The tools are compiled with optional CFFI support, so tools.n runs
+		// without a prebuilt lime.ndll. Rebuilding the ndll from this bootstrap
+		// path used to inject an unrequested, host-architecture build into the
+		// start of every "lime <command>" invocation: on ARM64 macOS runners that
+		// bootstrap build was x86_64 (it carries none of the user's defines, so it
+		// cannot honor -arm64 or the requested target), it wasted minutes per job,
+		// and a failure there aborted the command before the requested build ever
+		// started. The ndll for the requested target is built by the explicit
+		// "lime rebuild <target>" step instead.
 	}
 
 	public static function runCommand(path:String, command:String, args:Array<String>, throwErrors:Bool = true):Int

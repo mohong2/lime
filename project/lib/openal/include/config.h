@@ -1,6 +1,10 @@
 #ifdef HX_MACOS
 
+#ifdef HXCPP_ARM64
+#include "config-macos-arm64.h"
+#else
 #include "config-macos-x86_64.h"
+#endif
 
 #elif defined(HX_WINDOWS)
 
