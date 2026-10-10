@@ -166,13 +166,11 @@ class MacPlatform extends PlatformTarget
 
 	private function getNdllDirectory():String
 	{
-		// hxcpp writes native Apple Silicon binaries into ndll/MacArm64
-		if (targetFlags.exists("arm64"))
-		{
-			return "MacArm64";
-		}
-
-		return "Mac" + (is64 ? "64" : "");
+		// Every 64-bit macOS ndll - including Apple Silicon - lives in ndll/Mac64.
+		// That is the only 64-bit directory lime copies from, and it is also where
+		// the host tools' CFFI loader looks for lime.ndll when running on an
+		// arm64 runner (hxp tries ndll/<system> and ndll/<system>64 only).
+		return (is64 || targetFlags.exists("arm64")) ? "Mac64" : "Mac";
 	}
 
 	public override function build():Void

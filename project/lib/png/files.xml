@@ -39,7 +39,12 @@
 		<file name="${NATIVE_TOOLKIT_PATH}/png/pngwtran.c" />
 		<file name="${NATIVE_TOOLKIT_PATH}/png/pngwutil.c" />
 		
-		<section if="ios || tvos">
+		<!-- The ARM NEON implementations must be compiled for every AArch64 target:
+		     pngpriv.h enables PNG_ARM_NEON_IMPLEMENTATION from the compiler's own
+		     architecture macros (__ARM_NEON), so any arm64 build references these
+		     symbols whether or not this section was meant for it. Missing them shows
+		     up as "Undefined symbols ... _png_do_expand_palette_rgb8_neon". -->
+		<section if="ios || tvos || HXCPP_ARM64">
 			
 			<file name="${NATIVE_TOOLKIT_PATH}/png/arm/arm_init.c" />
 			<file name="${NATIVE_TOOLKIT_PATH}/png/arm/filter_neon_intrinsics.c" />
