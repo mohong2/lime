@@ -167,11 +167,11 @@ class I18n
 		en.set("report.title", "Build summary");
 		en.set("report.target", "target");
 		en.set("report.commands", "commands");
+		en.set("report.architecture", "architecture");
+		en.set("report.version", "version");
 		en.set("report.output", "output");
-		en.set("report.binary", "binary");
+		en.set("report.binary", "artifact");
 		en.set("report.elapsed", "elapsed");
-		en.set("report.next", "next");
-		en.set("report.run", "haxelib run lime run {target}");
 		en.set("progress.bar", "[{bar}] {pct}% {done}/{total} ETA {eta}");
 		en.set("progress.done", "{label}: {total} items in {elapsed}");
 
@@ -179,11 +179,11 @@ class I18n
 		zh.set("report.title", "构建摘要");
 		zh.set("report.target", "目标平台");
 		zh.set("report.commands", "执行命令");
+		zh.set("report.architecture", "架构");
+		zh.set("report.version", "应用版本");
 		zh.set("report.output", "输出目录");
-		zh.set("report.binary", "可执行文件");
+		zh.set("report.binary", "产物");
 		zh.set("report.elapsed", "耗时");
-		zh.set("report.next", "下一步");
-		zh.set("report.run", "haxelib run lime run {target}");
 		zh.set("progress.bar", "[{bar}] {pct}% {done}/{total} 剩余 {eta}");
 		zh.set("progress.done", "{label}: 共 {total} 项, 用时 {elapsed}");
 
