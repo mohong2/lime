@@ -25,6 +25,11 @@ class AndroidPlatform extends PlatformTarget
 {
 	private var deviceID:String;
 
+	// The architectures the caller asked for explicitly (-arm64, -armv7, -x86, ...).
+	// Android's defaults union ARMV7 and ARM64 into every project, so without
+	// remembering this a single-ABI request still compiled - and shipped - both.
+	private var requestedArchitectures:Array<Architecture> = [];
+
 	public function new(command:String, _project:HXProject, targetFlags:Map<String, String>)
 	{
 		super(command, _project, targetFlags);
@@ -81,6 +86,16 @@ class AndroidPlatform extends PlatformTarget
 				hidden: false,
 				title: ""
 			};
+
+		// Remember an explicit architecture request. The command line also merges it
+		// into project.architectures, but the defaults below union ARMV7 and ARM64 in
+		// as well, so by the time build()/rebuild() look at the project the request is
+		// no longer distinguishable - and without it a single-ABI build compiled and
+		// shipped both ABIs.
+		if (targetFlags.exists("arm64")) requestedArchitectures.push(Architecture.ARM64);
+		if (targetFlags.exists("armv7") || targetFlags.exists("v7")) requestedArchitectures.push(Architecture.ARMV7);
+		if (targetFlags.exists("armv6") || targetFlags.exists("armv5")) requestedArchitectures.push(Architecture.ARMV5);
+		if (targetFlags.exists("x86")) requestedArchitectures.push(Architecture.X86);
 
 		if (project.targetFlags.exists("simulator") || project.targetFlags.exists("emulator"))
 		{
@@ -144,11 +159,27 @@ class AndroidPlatform extends PlatformTarget
 
 		var architectures = [];
 
-		if (hasARMV5) architectures.push(Architecture.ARMV5);
-		if (hasARMV7 || (!hasARMV5 && !hasX86)) architectures.push(Architecture.ARMV7);
-		if (hasARM64) architectures.push(Architecture.ARM64);
-		if (hasX86) architectures.push(Architecture.X86);
-		if (hasX64) architectures.push(Architecture.X64);
+		if (requestedArchitectures.length > 0)
+		{
+			// An explicit request (-arm64 / -armv7) selects exactly that ABI. It used to
+			// be unioned with the defaults above, so every Android build compiled
+			// armeabi-v7a *and* arm64-v8a and shipped a fat APK.
+			for (architecture in requestedArchitectures)
+			{
+				if (!ArrayTools.containsValue(architectures, architecture))
+				{
+					architectures.push(architecture);
+				}
+			}
+		}
+		else
+		{
+			if (hasARMV5) architectures.push(Architecture.ARMV5);
+			if (hasARMV7 || (!hasARMV5 && !hasX86)) architectures.push(Architecture.ARMV7);
+			if (hasARM64) architectures.push(Architecture.ARM64);
+			if (hasX86) architectures.push(Architecture.X86);
+			if (hasX64) architectures.push(Architecture.X64);
+		}
 
 		for (architecture in architectures)
 		{
@@ -204,7 +235,9 @@ class AndroidPlatform extends PlatformTarget
 			System.copyIfNewer(targetDirectory + "/obj/libApplicationMain" + (project.debug ? "-debug" : "") + suffix, path + "/libApplicationMain.so");
 		}
 
-		if (!hasARMV5)
+		// Clean stale ABI folders using the list that was actually built, or a
+		// single-ABI build would leave the other ABI's .so in the APK.
+		if (!ArrayTools.containsValue(architectures, Architecture.ARMV5))
 		{
 			if (FileSystem.exists(sourceSet + "/jniLibs/armeabi"))
 			{
@@ -212,7 +245,7 @@ class AndroidPlatform extends PlatformTarget
 			}
 		}
 
-		if (!hasARMV7)
+		if (!ArrayTools.containsValue(architectures, Architecture.ARMV7))
 		{
 			if (FileSystem.exists(sourceSet + "/jniLibs/armeabi-v7a"))
 			{
@@ -220,7 +253,7 @@ class AndroidPlatform extends PlatformTarget
 			}
 		}
 
-		if (!hasARM64)
+		if (!ArrayTools.containsValue(architectures, Architecture.ARM64))
 		{
 			if (FileSystem.exists(sourceSet + "/jniLibs/arm64-v8a"))
 			{
@@ -228,7 +261,7 @@ class AndroidPlatform extends PlatformTarget
 			}
 		}
 
-		if (!hasX86)
+		if (!ArrayTools.containsValue(architectures, Architecture.X86))
 		{
 			if (FileSystem.exists(sourceSet + "/jniLibs/x86"))
 			{
@@ -236,7 +269,7 @@ class AndroidPlatform extends PlatformTarget
 			}
 		}
 
-		if (!hasX64)
+		if (!ArrayTools.containsValue(architectures, Architecture.X64))
 		{
 			if (FileSystem.exists(sourceSet + "/jniLibs/x86_64"))
 			{
@@ -352,9 +385,15 @@ class AndroidPlatform extends PlatformTarget
 		var armv5 = ((command == "rebuild" && project.config.getBool("android.rebuild-armv5", false))
 			|| ArrayTools.containsValue(project.architectures, Architecture.ARMV5)
 			|| ArrayTools.containsValue(project.architectures, Architecture.ARMV6));
-		var armv7 = (command == "rebuild" || ArrayTools.containsValue(project.architectures, Architecture.ARMV7));
-		var arm64 = (command == "rebuild" || ArrayTools.containsValue(project.architectures, Architecture.ARM64));
-		var x86 = (command == "rebuild" || ArrayTools.containsValue(project.architectures, Architecture.X86));
+		// An explicit request wins over "rebuild means every ABI": with "-arm64" the
+		// old condition also compiled armeabi-v7a and x86 for nothing.
+		var explicit = (requestedArchitectures.length > 0);
+		var armv7 = explicit ? ArrayTools.containsValue(requestedArchitectures, Architecture.ARMV7)
+			: (command == "rebuild" || ArrayTools.containsValue(project.architectures, Architecture.ARMV7));
+		var arm64 = explicit ? ArrayTools.containsValue(requestedArchitectures, Architecture.ARM64)
+			: (command == "rebuild" || ArrayTools.containsValue(project.architectures, Architecture.ARM64));
+		var x86 = explicit ? ArrayTools.containsValue(requestedArchitectures, Architecture.X86)
+			: (command == "rebuild" || ArrayTools.containsValue(project.architectures, Architecture.X86));
 		var x64 = (/*command == "rebuild" ||*/ ArrayTools.containsValue(project.architectures, Architecture.X64));
 
 		var commands = [];
