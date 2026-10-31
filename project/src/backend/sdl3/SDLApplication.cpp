@@ -2,6 +2,7 @@
 #include "SDLGamepad.h"
 #include "SDLJoystick.h"
 #include <system/System.h>
+#include <utils/FatalReport.h>
 
 // SDL_SetMainReady() is declared in SDL_main.h. We must NOT let SDL_main.h
 // redefine main() (hxcpp provides its own entry point), so define
@@ -347,8 +348,14 @@ namespace lime {
 
 		if (!SDL_Init (initFlags)) {
 
-			printf ("Could not initialize SDL: %s.\n", SDL_GetError ());
-			exit (1);
+			// SeiunEngine: this used to be "printf + exit". A GUI-subsystem build has
+			// no console, so the last thing the user saw was the process vanishing
+			// with no window at all. The ndll's reporter writes the report, shows a
+			// native dialog with the raw SDL_GetError() text and then exits.
+			char fatalMessage[1024];
+			snprintf (fatalMessage, sizeof (fatalMessage), "SDL_Init failed: %s", SDL_GetError ());
+			lime::FatalReport::Report ("sdl_init", fatalMessage,
+				"SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK) returned false");
 
 		}
 

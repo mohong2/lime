@@ -3,6 +3,7 @@
 #include "SDLApplication.h"
 #include "../../graphics/opengl/OpenGL.h"
 #include "../../graphics/opengl/OpenGLBindings.h"
+#include <utils/FatalReport.h>
 
 #ifdef HX_WINDOWS
 #include <SDL_syswm.h>
@@ -160,9 +161,17 @@ namespace lime {
 		}
 		#endif
 
-		if (!sdlWindow) {
+		if (!sdlWindow || lime::FatalReport::TestFail ("window")) {
 
-			printf ("Could not create SDL window: %s.\n", SDL_GetError ());
+			// SeiunEngine: same reporter as the SDL3 backend (see FatalReport.h).
+			char fatalMessage[1024];
+			snprintf (fatalMessage, sizeof (fatalMessage), "Could not create SDL window: %s",
+				sdlWindow ? "forced failure (SEIUN_TEST_FATAL=window)" : SDL_GetError ());
+			char fatalDetail[512];
+			snprintf (fatalDetail, sizeof (fatalDetail),
+				"SDL_CreateWindow(title=\"%s\", width=%d, height=%d, flags=0x%08X)",
+				title ? title : "(null)", width, height, (unsigned int)sdlWindowFlags);
+			lime::FatalReport::Report ("window", fatalMessage, fatalDetail);
 			return;
 
 		}
@@ -284,9 +293,25 @@ namespace lime {
 
 			((SDLApplication*)currentApplication)->RegisterWindow (this);
 
+			if (!context) {
+
+				char glMessage[512];
+				snprintf (glMessage, sizeof (glMessage), "OpenGL context unavailable, using the software renderer: %s",
+					SDL_GetError ());
+				lime::FatalReport::ReportNonFatal ("gl_software", glMessage, 0);
+
+			}
+
 		} else {
 
-			printf ("Could not create SDL renderer: %s.\n", SDL_GetError ());
+			// SeiunEngine: no GL context and no SDL renderer means nothing can be
+			// drawn; report it (with SDL's own error text) and stop.
+			char glMessage[1024];
+			snprintf (glMessage, sizeof (glMessage), "Could not create an OpenGL context or an SDL renderer: %s",
+				SDL_GetError ());
+			lime::FatalReport::Report ("gl", glMessage,
+				"SDL_GL_CreateContext() and SDL_CreateRenderer() both failed - no usable GPU path");
+			return;
 
 		}
 

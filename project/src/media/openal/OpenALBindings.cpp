@@ -16,6 +16,7 @@
 #include <system/CFFIPointer.h>
 #include <system/Mutex.h>
 #include <utils/ArrayBufferView.h>
+#include <utils/FatalReport.h>
 #include <list>
 #include <map>
 
@@ -3412,6 +3413,23 @@ namespace lime {
 	value lime_alc_open_device (HxString devicename) {
 
 		ALCdevice* alcDevice = alcOpenDevice (devicename.__s);
+
+		// SeiunEngine: a missing/failed audio device used to be completely silent -
+		// the game simply played no sound and nothing said why. Non-fatal on
+		// purpose: no audio device is a degraded game, not a dead one.
+		if (!alcDevice) {
+
+			ALCint alcError = alcGetError (0);
+			const ALCchar* alcErrorText = alcGetString (0, alcError);
+			char audioMessage[512];
+			snprintf (audioMessage, sizeof (audioMessage), "alcOpenDevice(\"%s\") returned NULL: %s (0x%04X)",
+				devicename.__s ? devicename.__s : "default", alcErrorText ? alcErrorText : "unknown error",
+				(unsigned int)alcError);
+			lime::FatalReport::ReportNonFatal ("audio", audioMessage,
+				"No OpenAL output device: the game continues without sound.");
+
+		}
+
 		atexit (lime_al_atexit);
 
 		value ptr = CFFIPointer (alcDevice, gc_alc_object);

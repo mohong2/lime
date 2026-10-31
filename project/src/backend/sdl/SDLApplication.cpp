@@ -2,6 +2,7 @@
 #include "SDLGamepad.h"
 #include "SDLJoystick.h"
 #include <system/System.h>
+#include <utils/FatalReport.h>
 
 #ifdef HX_MACOS
 #include <CoreFoundation/CoreFoundation.h>
@@ -32,7 +33,13 @@ namespace lime {
 
 		if (SDL_Init (initFlags) != 0) {
 
-			printf ("Could not initialize SDL: %s.\n", SDL_GetError ());
+			// SeiunEngine: this used to only printf and then CONTINUE, i.e. every
+			// later SDL call failed too and the game hung on a black screen with no
+			// explanation. Same reporter as the SDL3 backend.
+			char fatalMessage[1024];
+			snprintf (fatalMessage, sizeof (fatalMessage), "SDL_Init failed: %s", SDL_GetError ());
+			lime::FatalReport::Report ("sdl_init", fatalMessage,
+				"SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_TIMER | SDL_INIT_JOYSTICK) failed");
 
 		}
 
