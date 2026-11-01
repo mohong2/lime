@@ -171,8 +171,10 @@
             <file name="${NATIVE_TOOLKIT_PATH}/openal/Alc/backends/opensl.c" />
             <!-- HAVE_SDL2 (JNI fix) makes ALc.c reference ALCsdl2BackendFactory_getFactory,
                  but the real sdl2 backend can't compile against SDL3; provide a stub
-                 whose init always fails (skipped during probing). -->
-            <file name="${NATIVE_TOOLKIT_PATH}/openal/Alc/backends/sdl2_stub.c" />
+                 whose init always fails (skipped during probing). An SDL2 build already
+                 compiles the real Alc/backends/sdl2.c, so the stub has to stay out of
+                 that configuration or both definitions collide at link time. -->
+            <file name="${NATIVE_TOOLKIT_PATH}/openal/Alc/backends/sdl2_stub.c" unless="NATIVE_TOOLKIT_HAVE_SDL" />
 
         </section>
 

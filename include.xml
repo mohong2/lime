@@ -22,6 +22,11 @@
 	<define name="lime-openal" unless="lime-console || flash || html5" />
 	<define name="lime-opengl" if="desktop" unless="html5" />
 	<define name="lime-opengles" if="emscripten || mobile" />
+	<!-- Forward the app-level SDL3 opt-in ("-Dlime-sdl3" in a project file) to the
+	     native build: this define is what makes project/Build.xml pick LIME_SDL3,
+	     so "lime rebuild <target>" produces the same backend flavour the app links
+	     against instead of silently rebuilding the SDL2 one. -->
+	<define name="lime-sdl3" if="lime-sdl3" />
 	<define name="lime-vorbis" if="native" />
 	<define name="lime-webgl" if="html5" />
 

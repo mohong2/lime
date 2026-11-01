@@ -30,6 +30,12 @@
 	<set name="LIME_OPENGL" value="1" />
 	<set name="LIME_PIXMAN" value="1" />
 	<set name="LIME_PNG" value="1" />
+	<!-- SDL3 is the default backend of this fork on the platforms it supports, the
+	     same way a project file opts in with "-Dlime-sdl3". A native rebuild reads
+	     only this file, so without the default "lime rebuild <target>" would build
+	     the SDL2 flavour and overwrite the library that an SDL3 app links against.
+	     Pass "-Dlime-sdl2" to build the SDL2 backend instead. -->
+	<set name="lime-sdl3" value="1" if="windows || mac || linux || android" unless="lime-sdl2 || LIME_SDL2" />
 	<set name="LIME_SDL" value="1" unless="lime-sdl3 || LIME_SDL3" />
 	<set name="LIME_SDL3" value="1" if="lime-sdl3 || LIME_SDL3" />
 	<set name="OBJEXT" value="${OBJEXT}-sdl2" if="LIME_SDL" />
