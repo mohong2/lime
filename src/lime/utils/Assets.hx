@@ -10,8 +10,12 @@ import lime.app.Future;
 import lime.media.AudioBuffer;
 import lime.graphics.Image;
 import lime.text.Font;
+import lime.system.System;
 import lime.utils.Bytes;
 import lime.utils.Log;
+#if sys
+import sys.FileSystem;
+#end
 #if !macro
 import haxe.Json;
 #end
@@ -442,6 +446,25 @@ class Assets
 			if (libraryPaths.exists(id))
 			{
 				path = libraryPaths[id];
+				#if sys
+				// Generated manifests used to be relative ("./manifest/<library>.json"),
+				// so a process started outside the executable directory could not find
+				// them. Fall back to the application directory before giving up.
+				if (!Path.isAbsolute(path) && !FileSystem.exists(path))
+				{
+					var relative = path;
+					if (StringTools.startsWith(relative, "./") || StringTools.startsWith(relative, ".\\"))
+					{
+						relative = relative.substr(2);
+					}
+
+					var applicationPath = System.applicationDirectory + relative;
+					if (FileSystem.exists(applicationPath))
+					{
+						path = applicationPath;
+					}
+				}
+				#end
 				rootPath = Path.directory(path);
 			}
 			else

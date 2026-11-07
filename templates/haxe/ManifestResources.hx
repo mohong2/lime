@@ -58,7 +58,10 @@ import sys.FileSystem;
 			rootPath = "assets/";
 			#elseif android
 			rootPath = "";
-			#elseif console
+			#elseif (sys && !flash)
+			// Native desktop/console: resolve manifests next to the executable, not
+			// against the process working directory. A shortcut, a console started in
+			// the project root, or any other cwd must not decide whether assets exist.
 			rootPath = lime.system.System.applicationDirectory;
 			#else
 			rootPath = "./";

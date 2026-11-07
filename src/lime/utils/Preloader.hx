@@ -290,7 +290,12 @@ class Preloader #if flash extends Sprite #end
 					})
 					.onError(function(e)
 					{
-						Log.error(e);
+						// A missing/failed library must not kill the whole boot: Log.error()
+						// throws by default, and the preloader would also wait forever for a
+						// library that can never complete. Report it, count it as handled,
+						// and let the game start with the libraries that did load.
+						Log.warn('Failed to load asset library "' + name + '": ' + e + ' (continuing without it)');
+						loadedAssetLibrary(name);
 					});
 			}
 		}
