@@ -4,11 +4,15 @@
 #include <system/System.h>
 #include <utils/FatalReport.h>
 
-// SDL_SetMainReady() is declared in SDL_main.h. We must NOT let SDL_main.h
-// redefine main() (hxcpp provides its own entry point), so define
-// SDL_MAIN_HANDLED before including it. This still declares SDL_SetMainReady.
+// SDL_SetMainReady() is declared in SDL_main.h. Where hxcpp owns the process entry
+// point, SDL must not redefine main(), so SDL_MAIN_HANDLED is defined first.
+// iOS/tvOS are the exception: SDL has to provide main() there (the template only
+// exports SDL_main, reached through UIApplicationMain -> SDLUIKitDelegate).
+// SDL2 defined main() in its UIKit backend; SDL3 moved it into SDL_main_impl.h.
+#if !defined(IPHONE) && !defined(APPLETV)
 #ifndef SDL_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
+#endif
 #endif
 #include <SDL3/SDL_main.h>
 
@@ -391,6 +395,12 @@ namespace lime {
 		SDL_SetEventEnabled (SDL_EVENT_DROP_FILE, true);
 		SDLJoystick::Init ();
 
+		#if defined(IPHONE)
+		// SeiunEngine: the home-indicator bar overlaps the bottom of the game and a
+		// stray swipe leaves the app mid-song. "2" hides it after the system delay.
+		SDL_SetHint (SDL_HINT_IOS_HIDE_HOME_INDICATOR, "2");
+		#endif
+
 		#ifdef HX_MACOS
 		CFURLRef resourcesURL = CFBundleCopyResourcesDirectoryURL (CFBundleGetMainBundle ());
 		char path[PATH_MAX];
@@ -596,6 +606,10 @@ namespace lime {
 			case SDL_EVENT_WINDOW_MINIMIZED:
 			case SDL_EVENT_WINDOW_MOVED:
 			case SDL_EVENT_WINDOW_RESTORED:
+			// SeiunEngine: a pixel-ratio change is a layout change; route it to
+			// ProcessWindowEvent so the engine re-measures.
+			case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+			case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
 
 				ProcessWindowEvent (event);
 				break;
@@ -1154,6 +1168,23 @@ namespace lime {
 
 				case SDL_EVENT_WINDOW_RESTORED: windowEvent.type = WINDOW_RESTORE; break;
 
+				case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+				case SDL_EVENT_WINDOW_DISPLAY_CHANGED: {
+
+					// SeiunEngine: a Retina <-> non-Retina move (or a macOS/iPad
+					// "Display Zoom" change) alters pixels per point without resizing
+					// the window. openfl only re-reads window.scale on a resize, so
+					// re-emit one with the current size to rebuild the DPI layout.
+					SDL_Window* changedWindow = SDL_GetWindowFromID (event->window.windowID);
+
+					if (!changedWindow) break;
+
+					windowEvent.type = WINDOW_RESIZE;
+					SDL_GetWindowSize (changedWindow, &windowEvent.width, &windowEvent.height);
+					break;
+
+				}
+
 			}
 
 			windowEvent.windowID = event->window.windowID;
@@ -1428,9 +1459,11 @@ namespace lime {
 
 		return active;
 
-		#else
+		#elif defined (EMSCRIPTEN)
 
-		// Original IPHONE / EMSCRIPTEN path.
+		// Web: unchanged from the original shared path. The browser drives the loop
+		// through set_main_loop, so nothing here blocks; the timer only decides when
+		// the next frame is pushed.
 		if (active && (firstTime || WaitEvent (&event))) {
 
 			firstTime = false;
@@ -1461,6 +1494,63 @@ namespace lime {
 				timerActive = true;
 				timerID = SDL_AddTimer ((Uint32) (nextUpdate - currentUpdate), OnTimer, 0);
 
+			}
+
+		}
+
+		return active;
+
+		#else
+
+		// SeiunEngine: iOS/tvOS are driven by the UIKit display link (see
+		// RegisterWindow -> SDL_SetiOSAnimationCallback), so this tick must never
+		// block. WaitEvent() on the first tick parked the main thread until the
+		// first event, i.e. no frame was presented at startup. Poll and let the
+		// display link do the pacing.
+		if (!active) return active;
+
+		firstTime = false;
+
+		while (SDL_PollEvent (&event)) {
+
+			HandleEvent (&event);
+			event.type = -1;
+			if (!active)
+				return active;
+
+		}
+
+		double probeDrainEnd = HiResMs ();
+
+		currentUpdate = HiResMs ();
+
+		if (currentUpdate >= nextUpdate) {
+
+			int catchup = 0;
+
+			do {
+
+				nextUpdate += framePeriod;
+				catchup++;
+
+			} while (nextUpdate <= currentUpdate && catchup < 4);
+
+			if (catchup >= 4) {
+
+				nextUpdate = currentUpdate + framePeriod;
+
+			}
+
+			applicationEvent.type = UPDATE;
+			applicationEvent.deltaTime = currentUpdate - lastUpdate;
+			lastUpdate = currentUpdate;
+
+			ApplicationEvent::Dispatch (&applicationEvent);
+			RenderEvent::Dispatch (&renderEvent);
+
+			{
+				double probeWorkEnd = HiResMs ();
+				ProbeLogFrame (framePeriod, probeDrainEnd - probeDrainStart, probeWorkEnd - probeDrainEnd);
 			}
 
 		}

@@ -522,6 +522,11 @@
 
         <section if="ios || tvos">
 
+            <!-- SeiunEngine: the generic main-callbacks file is compiled out on iOS,
+                 so the UIKit one is required; iOS has no native file dialog. -->
+            <file name="${NATIVE_TOOLKIT_PATH}/sdl3/src/main/ios/SDL_sysmain_callbacks.m" />
+            <file name="${NATIVE_TOOLKIT_PATH}/sdl3/src/dialog/dummy/SDL_dummydialog.c" />
+
             <file name="${NATIVE_TOOLKIT_PATH}/sdl3/src/audio/coreaudio/SDL_coreaudio.m" />
             <file name="${NATIVE_TOOLKIT_PATH}/sdl3/src/camera/coremedia/SDL_camera_coremedia.m" />
             <file name="${NATIVE_TOOLKIT_PATH}/sdl3/src/filesystem/cocoa/SDL_sysfilesystem.m" />
