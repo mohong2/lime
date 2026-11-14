@@ -1,6 +1,6 @@
 name: CI
 
-# SeiunEngine lime fork CI: 每次 push 都构建各平台 ndll (桌面/Android 为 SDL3, iOS 为 SDL2),
+# SeiunEngine lime fork CI: 每次 push 都构建各平台 ndll (Windows/Linux/macOS/Android/iOS 均走 SDL3),
 # 供下游引擎构建使用并验证 fork 源码可编译。
 #
 # 重要前提: 本仓库的 project/lib 原生库 (openal/pixman/sdl 等) 必须"展平"提交
@@ -180,8 +180,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # iOS 与 macOS 并行: 重建只从本仓库源码出发, 不需要 macOS 的产物。以前这里有
+  # needs: macos-ndll + 下载 Mac64 ndll, 是因为旧版 run.n 用 cffi 编译、运行 lime
+  # 命令时要先加载 ndll/Mac64/lime.ndll; 6a17784 把 run.n 改成 -nocffi 之后这条
+  # 依赖就消失了 (见上面 setup-haxe 一步的注释)。
   ios-ndll:
-    needs: macos-ndll
     runs-on: macos-13
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -203,14 +206,11 @@ jobs:
       - name: Verify Lime tools
         run: haxelib run lime --version
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: Mac64-NDLL
-          path: ndll/Mac64/
-
-      # iOS 引擎不使用 SDL3, 重建 SDL2 版 ndll
-      - name: Rebuild Lime iOS ndll
-        run: haxelib run lime rebuild ios -arm64 -release -nocolor -verbose -nocffi
+      # iOS/tvOS 自 d24dafd (apple SDL3) 起在 project/Build.xml 里默认走 SDL3 后端,
+      # 这里仍显式传一次 -Dlime-sdl3: 和 Windows/Linux/Android 三个 job 保持一致,
+      # 以后谁把默认值改回去, CI 也不会静默产出一个 SDL2 版 ndll。
+      - name: Rebuild Lime iOS ndll (SDL3)
+        run: haxelib run lime rebuild ios -arm64 -release -nocolor -verbose -nocffi -Dlime-sdl3
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
