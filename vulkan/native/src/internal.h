@@ -162,6 +162,16 @@ namespace vulkan {
 		PFN_vkResetFences ResetFences;
 		PFN_vkFreeCommandBuffers FreeCommandBuffers;
 
+		PFN_vkCreatePipelineCache CreatePipelineCache;
+		PFN_vkDestroyPipelineCache DestroyPipelineCache;
+		PFN_vkGetPipelineCacheData GetPipelineCacheData;
+
+		PFN_vkCreateQueryPool CreateQueryPool;
+		PFN_vkDestroyQueryPool DestroyQueryPool;
+		PFN_vkCmdResetQueryPool CmdResetQueryPool;
+		PFN_vkCmdWriteTimestamp CmdWriteTimestamp;
+		PFN_vkGetQueryPoolResults GetQueryPoolResults;
+
 		void Clear () { memset (this, 0, sizeof (*this)); }
 
 	};
@@ -173,10 +183,20 @@ namespace vulkan {
 	const int FILTER_NEAREST = 0;
 	const int FILTER_LINEAR = 1;
 
+	/** One pipeline per blend mode: see lime_vulkan_blend in the public header. */
+	const int BLEND_COUNT = 9;
+
 	/** A texture that lives in device memory. The handle is the public 64 bit id; pointers stay out of the ABI. */
+	/** A device memory block that several images share; defined in image.cpp. */
+	struct MemoryBlock;
+
 	struct Texture {
 
 		VkImage image;
+		/** The block the image lives in, NULL when the image owns its memory. */
+		MemoryBlock* block;
+		/** Offset inside that block. */
+		VkDeviceSize offset;
 		VkDeviceMemory memory;
 		VkImageView view;
 		/** Sampler per filter, indexed by FILTER_NEAREST / FILTER_LINEAR. */
@@ -185,10 +205,17 @@ namespace vulkan {
 		VkDescriptorSet descriptors[2];
 		int width;
 		int height;
+		/** The format the image and its view were created with. B8G8R8A8 exists so a
+		 *  BGRA source can be copied straight in instead of being swizzled on the CPU. */
+		VkFormat format;
 		/** Bytes per texel of the uploaded image: 4 for RGBA, 1 for palette indices. */
 		int bytesPerPixel;
 		/** Device memory this texture holds, so the totals can drop it on release. */
 		VkDeviceSize allocation;
+		/** Bytes taken out of the block, which can exceed 'allocation': a remainder
+		 *  smaller than the alignment is handed out with the image instead of being
+		 *  left as a fragment nothing can ever use. */
+		VkDeviceSize reserved;
 
 		/** Non-null only for render targets: the framebuffer the pass draws into. */
 		VkFramebuffer framebuffer;
@@ -215,7 +242,7 @@ namespace vulkan {
 		VkDescriptorSetLayout descriptorLayout;
 		VkDescriptorPool descriptorPool;
 		VkPipelineLayout layout;
-		VkPipeline pipelines[6];
+		VkPipeline pipelines[BLEND_COUNT];
 
 		uint32_t verticesWritten; /**< vertices written this frame (decides the write offset) */
 		uint32_t batchFirstVertex;/**< first vertex of the segment that is not submitted yet */
@@ -225,6 +252,10 @@ namespace vulkan {
 		uint32_t droppedVertices; /**< vertices dropped last frame, which sizes the growth */
 		uint32_t drawCalls;
 		uint32_t frameVertices;
+		/** Binding changes this frame: what a bindless table or a push constant rewrite would remove. */
+		uint32_t bindTextures;
+		uint32_t bindPipelines;
+		uint32_t bindScissors;
 
 		uint64_t currentTexture;
 		int currentFilter; /**< FILTER_NEAREST / FILTER_LINEAR, see also currentTexture */
@@ -289,7 +320,7 @@ namespace vulkan {
 
 		uint64_t handle;
 
-		VkPipeline pipelines[6];
+		VkPipeline pipelines[BLEND_COUNT];
 		VkPipelineLayout layout;
 		VkDescriptorSetLayout descriptorLayout;
 
@@ -319,6 +350,37 @@ namespace vulkan {
 
 	};
 
+	/**
+	 * Frame timing history, one sample per submitted frame.
+	 *
+	 * The GPU number is read two frames late: the timestamps of a slot only become
+	 * available once that slot's fence signals, which BeginFrame does anyway.
+	 * Nothing waits for a number the current frame does not need.
+	 */
+	struct FramePerf {
+
+		static const int HISTORY = 240;
+
+		float cpu[HISTORY]; /**< milliseconds from the start of BeginFrame to the end of EndFrame */
+		float gpu[HISTORY]; /**< GPU milliseconds for the same frame, negative when unknown */
+		uint32_t next;
+		uint32_t count;
+		uint32_t frames;    /**< frames measured since the device came up */
+
+		double frameStart;  /**< QPC seconds when the current frame opened */
+
+		VkQueryPool queries;
+		bool timestamps;    /**< the queue family can write timestamps at all */
+		float period;       /**< nanoseconds per timestamp tick */
+
+		/** CPU cost of the frame that last used a slot, waiting for its GPU half. */
+		float pendingCpu[MAX_FRAMES_IN_FLIGHT];
+		bool pendingCpuValid[MAX_FRAMES_IN_FLIGHT];
+
+		FramePerf ();
+
+	};
+
 	struct State {
 
 		Api api;
@@ -343,6 +405,9 @@ namespace vulkan {
 		std::vector<VkImage> images;
 		std::vector<VkImageView> views;
 		std::vector<VkFramebuffer> framebuffers;
+
+		/** Shared VkPipelineCache, persisted in cache/ so a start does not recompile. */
+		VkPipelineCache pipelineCache;
 
 		VkRenderPass renderPass;
 		/** Same attachment, but LOAD instead of CLEAR: reopens the window pass after
@@ -386,14 +451,33 @@ namespace vulkan {
 		Batch batch;
 		std::map<uint64_t, Texture*> textures;
 
+		FramePerf perf;
+
+		/** Upload channel totals: what the staging ring pushed, and how the waits went. */
+		struct UploadTotals {
+			uint64_t bytes;    /**< bytes copied into images */
+			uint64_t copies;   /**< vkCmdCopyBufferToImage calls */
+			uint64_t flushes;  /**< upload submits */
+			uint64_t waits;    /**< host waits on the upload fence */
+			uint64_t failures; /**< fence waits that did not succeed */
+
+			UploadTotals () : bytes (0), copies (0), flushes (0), waits (0), failures (0) {}
+		};
+
+		UploadTotals upload;
+
 		/** Device memory currently allocated, split by what it is for. */
 		struct MemoryTotals {
-			uint64_t textures;
+			uint64_t textures;     /**< bytes actually handed to images */
 			uint64_t textureCount;
 			uint64_t staging;
 			uint64_t other;
+			/** Bytes reserved by the block allocator: what the process really holds. */
+			uint64_t reserved;
+			/** vkAllocateMemory calls made for image memory, the number the driver caps. */
+			uint64_t allocations;
 
-			MemoryTotals () : textures (0), textureCount (0), staging (0), other (0) {}
+			MemoryTotals () : textures (0), textureCount (0), staging (0), other (0), reserved (0), allocations (0) {}
 		};
 
 		MemoryTotals memory;
@@ -487,6 +571,26 @@ namespace vulkan {
 	bool BeginFrame (const float clearColor[4]);
 	bool EndFrame ();
 
+	// Pipeline cache (lime_vulkan_device.cpp): loaded at attach, written back at detach.
+	bool CreatePipelineCache ();
+	void SavePipelineCache ();
+	void DestroyPipelineCache ();
+
+	// Frame timings (lime_vulkan_perf.cpp): CPU frame cost, GPU time, percentiles.
+	bool CreatePerfQueries ();
+	void DestroyPerfQueries ();
+	/** Writes the start timestamp and starts the CPU stopwatch of a frame. */
+	void PerfBeginFrame (VkCommandBuffer commandBuffer, uint32_t slot);
+	/** Writes the end timestamp, right before the command buffer is closed. */
+	void PerfEndFrame (VkCommandBuffer commandBuffer, uint32_t slot);
+	/** Stores the CPU cost of the frame that just presented; its GPU half follows later. */
+	void PerfCloseFrame (uint32_t slot);
+	/** Called once a slot fence signalled: pairs the CPU half with the GPU timestamps. */
+	void PerfCollectFrame (uint32_t slot);
+	/** Appends the percentile block to the stats text. Returns the number of bytes written. */
+	int PerfText (char* out, int capacity);
+	double PerfNow ();
+
 	// Render targets (lime_vulkan_image.cpp): a texture that is both a colour attachment and sampleable
 	bool CreateRenderTargetPass ();
 	void DestroyRenderTargetPass ();
@@ -518,6 +622,10 @@ namespace vulkan {
 	/** Records and submits every queued upload; returns the semaphore the frame
 	 *  submit has to wait on, or VK_NULL_HANDLE when nothing was queued. */
 	VkSemaphore FlushTextureUploads ();
+	/** Reports what happened to the semaphore FlushTextureUploads returned. A
+	 *  binary semaphore that is signalled twice is an error, so a waiter that was
+	 *  never submitted has to be taken back here. */
+	void UploadSemaphoreHandled (bool waited);
 	void DestroyTexture (uint64_t handle);
 	uint64_t WhiteTexture ();
 

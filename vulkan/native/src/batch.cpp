@@ -61,7 +61,7 @@ namespace vulkan {
 
 		}
 
-		for (int i = 0; i < 6; ++i) pipelines[i] = VK_NULL_HANDLE;
+		for (int i = 0; i < BLEND_COUNT; ++i) pipelines[i] = VK_NULL_HANDLE;
 
 		projection[0] = 0.0f;
 		projection[1] = 0.0f;
@@ -322,6 +322,40 @@ namespace vulkan {
 				attachment->dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 				break;
 
+			case LIME_VULKAN_BLEND_SUBTRACT:
+				// dst - src, which is what Flash's subtract does. Clamped by the
+				// hardware to 0 per channel.
+				attachment->blendEnable = VK_TRUE;
+				attachment->colorBlendOp = VK_BLEND_OP_REVERSE_SUBTRACT;
+				attachment->alphaBlendOp = VK_BLEND_OP_REVERSE_SUBTRACT;
+				attachment->srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+				attachment->dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+				attachment->srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+				attachment->dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+				break;
+
+			case LIME_VULKAN_BLEND_DARKEN:
+				// min(src, dst) per channel, straight from the blend unit: no shader
+				// variant, no second draw.
+				attachment->blendEnable = VK_TRUE;
+				attachment->colorBlendOp = VK_BLEND_OP_MIN;
+				attachment->alphaBlendOp = VK_BLEND_OP_MIN;
+				attachment->srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+				attachment->dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+				attachment->srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+				attachment->dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+				break;
+
+			case LIME_VULKAN_BLEND_LIGHTEN:
+				attachment->blendEnable = VK_TRUE;
+				attachment->colorBlendOp = VK_BLEND_OP_MAX;
+				attachment->alphaBlendOp = VK_BLEND_OP_MAX;
+				attachment->srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+				attachment->dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+				attachment->srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+				attachment->dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+				break;
+
 			case LIME_VULKAN_BLEND_ERASE:
 				attachment->blendEnable = VK_TRUE;
 				attachment->srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
@@ -489,7 +523,7 @@ namespace vulkan {
 		pipelineInfo.renderPass = state.renderPass;
 		pipelineInfo.subpass = 0;
 
-		VkResult result = dev.CreateGraphicsPipelines (state.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, pipeline);
+		VkResult result = dev.CreateGraphicsPipelines (state.device, state.pipelineCache, 1, &pipelineInfo, NULL, pipeline);
 
 		dev.DestroyShaderModule (state.device, vertexModule, NULL);
 		dev.DestroyShaderModule (state.device, fragmentModule, NULL);
@@ -521,12 +555,12 @@ namespace vulkan {
 
 		if (batch.layout == VK_NULL_HANDLE) {
 
-			for (int blend = 0; blend < 6; ++blend) {
+			for (int blend = 0; blend < BLEND_COUNT; ++blend) {
 
 				// One pipeline per blend mode; the render pass layout is only built for the first.
 				if (!CreateBatchPipeline (blend, &batch.pipelines[blend])) {
 
-					for (int i = 0; i < 6; ++i) {
+					for (int i = 0; i < BLEND_COUNT; ++i) {
 
 						if (batch.pipelines[i] != VK_NULL_HANDLE) {
 
@@ -564,7 +598,7 @@ namespace vulkan {
 
 		if (state.device != VK_NULL_HANDLE) {
 
-			for (int i = 0; i < 6; ++i) {
+			for (int i = 0; i < BLEND_COUNT; ++i) {
 
 				if (batch.pipelines[i] != VK_NULL_HANDLE) {
 
@@ -926,7 +960,7 @@ namespace vulkan {
 
 		int blend = batch.currentBlend;
 
-		if (blend < 0 || blend > 5) blend = LIME_VULKAN_BLEND_NORMAL;
+		if (blend < 0 || blend >= BLEND_COUNT) blend = LIME_VULKAN_BLEND_NORMAL;
 
 		DeviceApi& dev = state.dev;
 
@@ -941,6 +975,7 @@ namespace vulkan {
 
 			VkRect2D programScissor = CurrentScissor ();
 			dev.CmdSetScissor (commandBuffer, 0, 1, &programScissor);
+			batch.bindScissors++;
 
 			if (PrepareProgramDraw (program, texture, blend, commandBuffer, NULL)) {
 
@@ -960,12 +995,15 @@ namespace vulkan {
 			}
 
 			dev.CmdBindPipeline (commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, batch.pipelines[blend]);
+			batch.bindPipelines++;
 
 			dev.CmdBindDescriptorSets (commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, batch.layout,
 				0, 1, &texture->descriptors[batch.currentFilter], 0, NULL);
+			batch.bindTextures++;
 
 			VkRect2D scissor = CurrentScissor ();
 			dev.CmdSetScissor (commandBuffer, 0, 1, &scissor);
+			batch.bindScissors++;
 
 			dev.CmdPushConstants (commandBuffer, batch.layout, VK_SHADER_STAGE_VERTEX_BIT,
 				0, sizeof (float) * 4, batch.projection);

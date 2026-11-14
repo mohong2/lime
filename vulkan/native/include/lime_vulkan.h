@@ -165,7 +165,10 @@ extern "C" {
 		LIME_VULKAN_BLEND_MULTIPLY = 2,/**< dstColor / oneMinusSrcAlpha */
 		LIME_VULKAN_BLEND_SCREEN = 3,  /**< one / oneMinusSrcColor */
 		LIME_VULKAN_BLEND_ERASE = 4,   /**< zero / oneMinusSrcAlpha */
-		LIME_VULKAN_BLEND_NONE = 5     /**< one / zero (plain overwrite) */
+		LIME_VULKAN_BLEND_NONE = 5,    /**< one / zero (plain overwrite) */
+	LIME_VULKAN_BLEND_SUBTRACT = 6,/**< dst - src */
+	LIME_VULKAN_BLEND_DARKEN = 7,  /**< min(src, dst) */
+	LIME_VULKAN_BLEND_LIGHTEN = 8  /**< max(src, dst) */
 
 	} lime_vulkan_blend;
 

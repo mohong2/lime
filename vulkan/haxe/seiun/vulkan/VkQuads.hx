@@ -547,12 +547,18 @@ class VkQuads
 	{
 		if (mode == null) return 0;
 
+		// Mirrors lime_vulkan_blend in the public header. Modes the fixed function
+		// blend unit cannot express (invert, difference, overlay, hardlight) fall back
+		// to normal instead of drawing nothing: wrong looking beats invisible.
 		return switch ((mode : String))
 		{
 			case "add": 1;
 			case "multiply": 2;
 			case "screen": 3;
 			case "erase": 4;
+			case "subtract": 6;
+			case "darken": 7;
+			case "lighten": 8;
 			default: 0;
 		}
 	}
