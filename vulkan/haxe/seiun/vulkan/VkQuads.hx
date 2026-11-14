@@ -142,10 +142,13 @@ class VkQuads
 			texture = white ();
 		}
 
+		noteTexture (item, texture, quadCount);
+
 		if (!VkNative.valid (texture))
 		{
 
 			skipped += quadCount;
+			reportMissing (item, quadCount);
 			return true;
 		}
 
@@ -509,6 +512,62 @@ class VkQuads
 				return;
 			}
 		}
+	}
+
+	static var reportedMissing:Map<String, Bool> = new Map ();
+	static var seenTextures:Map<String, Bool> = new Map ();
+
+	/** Compact line for the periodic log: the counters, no draw list. */
+	public static function slimLine():String
+	{
+		// The native text carries a per draw record list; only the counters are wanted here.
+		var kept:String = "";
+
+		for (line in VkNative.batchStatsText ().split ("\n"))
+		{
+			if (StringTools.startsWith (line, "draw") || StringTools.startsWith (line, "q")) continue;
+
+			kept += line + " ";
+		}
+
+		return "quads=" + submitted + " skipped=" + skipped + " shaders=" + customShaders + "/" + VkProgram.created
+			+ " end=" + Std.int (VkRuntime.endMs * 100.0) / 100.0 + "ms " + VkCameraFilters.debugLine ()
+			+ " " + kept;
+	}
+
+	/** Names every texture the frame draws for the first time, so a quad can be traced to an asset. */
+	static function noteTexture(item:FlxDrawQuadsItem, texture:UInt64, quads:Int):Void
+	{
+		var id:String = Std.string (texture);
+
+		if (seenTextures.exists (id)) return;
+
+		seenTextures.set (id, true);
+
+		var size:Array<Int> = [0, 0];
+		VkNative.textureSize (texture, size);
+
+		var key:String = item.graphics == null ? "(none)" : (item.graphics.key == null ? "?" : item.graphics.key);
+
+		VkTextures.logLine ("newtex handle=" + id + " key=" + key + " tex=" + size[0] + "x" + size[1]
+			+ " quads=" + quads + " rect=" + item.rectsArray[0] + "," + item.rectsArray[1] + ","
+			+ item.rectsArray[2] + "," + item.rectsArray[3]
+			+ " colored=" + item.hasVertexColors + " alpha=" + (item.uniformAlpha ? item.firstAlpha : -1));
+	}
+
+	/** A draw without a texture leaves a hole; name the graphic once so the hole is traceable. */
+	static function reportMissing(item:FlxDrawQuadsItem, quads:Int):Void
+	{
+		var key:String = item.graphics == null ? "(none)" : (item.graphics.key == null ? "?" : item.graphics.key);
+
+		if (reportedMissing.exists (key)) return;
+
+		reportedMissing.set (key, true);
+
+		var bitmap:String = (item.graphics == null || item.graphics.bitmap == null) ? "null" : "ok";
+
+		VkTextures.logLine ("missing key=" + key + " quads=" + quads + " bitmap=" + bitmap
+			+ " rect=" + item.rectsArray[0] + "," + item.rectsArray[1] + "," + item.rectsArray[2] + "," + item.rectsArray[3]);
 	}
 
 	public static function debugLine():String

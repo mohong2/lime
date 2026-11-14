@@ -949,7 +949,17 @@ namespace vulkan {
 
 		Texture* texture = FindTexture (batch.currentTexture);
 
-		if (!texture) texture = FindTexture (state.whiteTexture);
+		if (!texture) {
+
+			// The handle the caller passed is not a live texture any more: a retired
+			// one or a zero from an upload that failed. Drawn with the white pixel so
+			// the segment does not vanish, but counted, because a white box on screen
+			// has to be traceable to this line.
+			batch.fallbackTextures++;
+
+			texture = FindTexture (state.whiteTexture);
+
+		}
 
 		if (!texture) {
 

@@ -274,6 +274,7 @@ namespace vulkan {
 		/** Colour offsets dropped because the vertex format has no additive part. A statistic, never silent. */
 		uint32_t droppedColorOffsets;
 		uint32_t droppedSegments;   /**< segments skipped because a texture or pipeline was missing: a silent hole has to be visible */
+		uint32_t fallbackTextures;  /**< segments drawn with the white pixel because their texture handle was dead */
 		uint32_t drawnVertices;     /**< vertices that reached vkCmdDraw*, a mismatch with verticesWritten means a segment was swallowed */
 
 		/** Ring of recent draws for diagnostics: vertex start, quad count, scissor, texture. */

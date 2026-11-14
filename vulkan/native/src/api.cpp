@@ -1131,11 +1131,11 @@ extern "C" {
 
 		char text[3072];
 		snprintf (text, sizeof (text), "memTex=%.1fMB/%llu memStage=%.1fMB\nmemReserved=%.1fMB\nmemAllocs=%llu\n"
-			"drawCalls=%u\nquads=%u\nvertices=%u\ndrawn=%u\ncapacity=%u\ndropped=%u\ndroppedColorOffsets=%u\ndroppedSegments=%u\n",
+			"drawCalls=%u\nquads=%u\nvertices=%u\ndrawn=%u\ncapacity=%u\ndropped=%u\ndroppedColorOffsets=%u\ndroppedSegments=%u\ntexFallback=%u\n",
 			memory.textures / 1048576.0, (unsigned long long)memory.textureCount, memory.staging / 1048576.0,
 			memory.reserved / 1048576.0, (unsigned long long)memory.allocations,
 			batch.drawCalls, batch.frameVertices / 4, batch.frameVertices, batch.drawnVertices, batch.vertexCapacity,
-			batch.droppedVertices, batch.droppedColorOffsets, batch.droppedSegments);
+			batch.droppedVertices, batch.droppedColorOffsets, batch.droppedSegments, batch.fallbackTextures);
 
 		// Frame timings and the numbers a later optimization is judged by. Percentiles
 		// are recomputed here, never per frame.

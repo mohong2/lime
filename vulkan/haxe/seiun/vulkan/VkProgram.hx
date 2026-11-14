@@ -297,6 +297,10 @@ class VkProgram
 				}
 			}
 
+			// Zero binds the white pixel, which turns a palette sprite into a white
+			// rectangle and a mask into a solid block. Name it once.
+			if (texture == 0 && !samplers[i].primary) VkTextures.logLine ("sampler " + samplers[i].name + " has no texture");
+
 			VkNative.programSetSamplerTexture (handle, i, texture);
 		}
 	}

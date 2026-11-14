@@ -9,6 +9,8 @@ package seiun.vulkan;
 
 import cpp.UInt64;
 import flixel.graphics.FlxGraphic;
+import sys.FileSystem;
+import sys.io.File;
 import lime.graphics.Image;
 import lime.graphics.PixelFormat;
 import openfl.display.BitmapData;
@@ -153,6 +155,8 @@ class VkTextures
 		if (!VkNative.valid (handle))
 		{
 			missed++;
+			logLine ("upload failed key=" + (graphic.key == null ? "?" : graphic.key)
+				+ " " + bitmap.width + "x" + bitmap.height + " " + nativeError ());
 			return 0;
 		}
 
@@ -365,6 +369,63 @@ class VkTextures
 		if (frame >= nextSweep) sweep (false);
 
 		enforceBudget ();
+
+		// One line every other second. A window build has no console, so this file
+		// is the only place a missing texture or a fallback can be seen.
+		if (frame % 60 == 0) logLine ("frame=" + frame + " " + nativeError () + VkQuads.slimLine () + " | " + stats ());
+	}
+
+	static var logLines:Int = 0;
+	static var logPath:String = "logs/vulkan-textures.txt";
+
+	/** The native error line, so a log entry says why and not only that. */
+	public static function nativeError():String
+	{
+		for (line in VkNative.statusText ().split ("\n"))
+		{
+			if (StringTools.startsWith (line, "error=")) return line + " ";
+		}
+
+		return "";
+	}
+
+	static var logAll:Bool = false;
+	static var logArgs:Bool = false;
+
+	/**
+	 * Appends one diagnostic line, capped so a long session cannot fill the disk.
+	 *
+	 * Off unless the game is started with --vulkan-texlog: this is a probe, and a
+	 * probe that writes files on every run is a cost nobody asked for.
+	 */
+	public static function logLine(text:String):Void
+	{
+		if (!logArgs)
+		{
+			logArgs = true;
+
+			for (arg in Sys.args ()) if (arg == "--vulkan-texlog") logAll = true;
+		}
+
+		if (!logAll) return;
+
+		if (logLines >= 4000) return;
+
+		try
+		{
+			if (logLines == 0)
+			{
+				if (!FileSystem.exists ("logs")) FileSystem.createDirectory ("logs");
+				File.saveContent (logPath, Date.now ().toString () + "\n");
+			}
+
+			var out = File.append (logPath, false);
+			out.writeString (text + "\n");
+			out.close ();
+
+			logLines++;
+		}
+		catch (error:Dynamic) {}
 	}
 
 	/**
@@ -571,6 +632,7 @@ class VkTextures
 				if (!loggedFormat)
 				{
 					loggedFormat = true;
+					logLine ("unsupported format " + Std.string (buffer.format) + " - such bitmaps are skipped");
 					Sys.println ("[vulkan] unsupported bitmap format " + Std.string (buffer.format)
 						+ " - such bitmaps are skipped");
 				}
