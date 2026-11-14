@@ -21,12 +21,16 @@ namespace vulkan {
 
 	Texture::Texture () :
 		image (VK_NULL_HANDLE),
+		block (NULL),
+		offset (0),
 		memory (VK_NULL_HANDLE),
 		view (VK_NULL_HANDLE),
 		width (0),
 		height (0),
+		format (VK_FORMAT_R8G8B8A8_UNORM),
 		bytesPerPixel (4),
 		allocation (0),
+		reserved (0),
 		framebuffer (VK_NULL_HANDLE),
 		layout (VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
 
@@ -65,6 +69,250 @@ namespace vulkan {
 	}
 
 	// ---------------------------------------------------------------------
+	// Image memory: blocks with suballocations
+	//
+	// One vkAllocateMemory per texture hits a driver limit (typically 4096 live
+	// allocations per heap) as soon as a modded song loads its sprites, and every
+	// allocation has its own driver bookkeeping. So images are carved out of
+	// larger blocks per memory type instead, with a first-fit free list and
+	// coalescing on release.
+	//
+	// A block that ends up with no live image is destroyed, which is what keeps
+	// the total flat across "load a song, leave, load another one" instead of
+	// reserving the high water mark for the session.
+	//
+	// Deliberately not VMA: the renderer needs no defragmentation, no budget
+	// callbacks and no virtual addresses, and 200 lines here beat a dependency.
+
+	struct MemoryBlock {
+
+		VkDeviceMemory memory;
+		uint32_t typeIndex;
+		VkDeviceSize size;
+		int live;
+
+		struct Range { VkDeviceSize offset, size; };
+
+		std::vector<Range> freeRanges;
+
+	};
+
+	static std::vector<MemoryBlock*> s_blocks;
+	/** Grows with the number of blocks so a small app does not reserve 64 MB. */
+	static VkDeviceSize s_nextBlockSize = 8u << 20;
+	static const VkDeviceSize kBlockMax = 64u << 20;
+
+	static void DestroyBlock (MemoryBlock* block) {
+
+		State& state = S ();
+
+		if (block->memory != VK_NULL_HANDLE && state.device != VK_NULL_HANDLE) {
+
+			state.dev.FreeMemory (state.device, block->memory, NULL);
+
+		}
+
+		state.memory.reserved -= block->size;
+		delete block;
+
+	}
+
+	/** Inserts a freed range and merges it with the neighbours it touches. */
+	static void ReturnRange (MemoryBlock* block, VkDeviceSize offset, VkDeviceSize size) {
+
+		size_t index = 0;
+
+		while (index < block->freeRanges.size () && block->freeRanges[index].offset < offset) index++;
+
+		MemoryBlock::Range range;
+		range.offset = offset;
+		range.size = size;
+
+		block->freeRanges.insert (block->freeRanges.begin () + (long)index, range);
+
+		// Merge with the following range first, then with the previous one.
+		if (index + 1 < block->freeRanges.size ()
+			&& block->freeRanges[index].offset + block->freeRanges[index].size == block->freeRanges[index + 1].offset) {
+
+			block->freeRanges[index].size += block->freeRanges[index + 1].size;
+			block->freeRanges.erase (block->freeRanges.begin () + (long)index + 1);
+
+		}
+
+		if (index > 0
+			&& block->freeRanges[index - 1].offset + block->freeRanges[index - 1].size == block->freeRanges[index].offset) {
+
+			block->freeRanges[index - 1].size += block->freeRanges[index].size;
+			block->freeRanges.erase (block->freeRanges.begin () + (long)index);
+
+		}
+
+	}
+
+	static MemoryBlock* CreateBlock (uint32_t typeIndex, VkDeviceSize bytes) {
+
+		State& state = S ();
+		DeviceApi& dev = state.dev;
+
+		VkMemoryAllocateInfo allocateInfo = {};
+		allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		allocateInfo.allocationSize = bytes;
+		allocateInfo.memoryTypeIndex = typeIndex;
+
+		MemoryBlock* block = new MemoryBlock ();
+		block->memory = VK_NULL_HANDLE;
+		block->typeIndex = typeIndex;
+		block->size = 0;
+		block->live = 0;
+
+		if (dev.AllocateMemory (state.device, &allocateInfo, NULL, &block->memory) != VK_SUCCESS) {
+
+			delete block;
+			return NULL;
+
+		}
+
+		block->size = bytes;
+
+		MemoryBlock::Range whole;
+		whole.offset = 0;
+		whole.size = bytes;
+		block->freeRanges.push_back (whole);
+
+		state.memory.allocations++;
+		state.memory.reserved += bytes;
+
+		s_blocks.push_back (block);
+
+		return block;
+
+	}
+
+	/**
+	 * Carves image memory out of a block.
+	 *
+	 * @return false when even a fresh block could not be allocated; the caller
+	 *         then fails the texture and reports it, it never aborts.
+	 */
+	static bool AllocateImageMemory (const VkMemoryRequirements& requirements, uint32_t typeIndex,
+		MemoryBlock** outBlock, VkDeviceSize* outOffset, VkDeviceSize* outReserved) {
+
+		const VkDeviceSize alignment = requirements.alignment > 256 ? requirements.alignment : 256;
+
+		for (size_t i = 0; i < s_blocks.size (); ++i) {
+
+			MemoryBlock* block = s_blocks[i];
+
+			if (block->typeIndex != typeIndex) continue;
+
+			for (size_t r = 0; r < block->freeRanges.size (); ++r) {
+
+				VkDeviceSize offset = block->freeRanges[r].offset;
+				VkDeviceSize aligned = (offset + alignment - 1) & ~(alignment - 1);
+				VkDeviceSize padding = aligned - offset;
+				VkDeviceSize available = block->freeRanges[r].size > padding ? block->freeRanges[r].size - padding : 0;
+
+				if (available < requirements.size) continue;
+
+				// Keep a usable gap: a remainder smaller than the alignment can never
+				// hold another image, so it is handed out with this one instead.
+				VkDeviceSize take = requirements.size;
+
+				if (available - take < alignment) take = available;
+
+				if (padding > 0) {
+
+					block->freeRanges[r].offset += padding;
+					block->freeRanges[r].size -= padding;
+
+				}
+
+				block->freeRanges[r].offset += take;
+				block->freeRanges[r].size -= take;
+
+				if (block->freeRanges[r].size == 0) {
+
+					block->freeRanges.erase (block->freeRanges.begin () + (long)r);
+
+				}
+
+				block->live++;
+
+				*outBlock = block;
+				*outOffset = aligned;
+				if (outReserved) *outReserved = take;
+				return true;
+
+			}
+
+		}
+
+		// Nothing fits: a new block, sized for the request but never above the cap.
+		VkDeviceSize bytes = s_nextBlockSize;
+
+		if (bytes < requirements.size + alignment) bytes = requirements.size + alignment;
+
+		if (bytes > kBlockMax) bytes = requirements.size + alignment > kBlockMax ? requirements.size + alignment : kBlockMax;
+
+		MemoryBlock* block = CreateBlock (typeIndex, bytes);
+
+		if (!block) {
+
+			SetError ("vkAllocateMemory(image block) failed");
+			return false;
+
+		}
+
+		if (s_nextBlockSize < kBlockMax) s_nextBlockSize <<= 1;
+
+		if (!AllocateImageMemory (requirements, typeIndex, outBlock, outOffset, outReserved)) {
+
+			// A brand new block cannot fail for a request it was sized for; if it
+			// does, say so instead of handing out memory the driver refused.
+			SetError ("image suballocation failed inside a fresh block");
+			return false;
+
+		}
+
+		return true;
+
+	}
+
+	/** Gives the range back; a block without a live image is destroyed. */
+	static void ReleaseImageMemory (MemoryBlock* block, VkDeviceSize offset, VkDeviceSize size) {
+
+		if (!block) return;
+
+		block->live--;
+
+		ReturnRange (block, offset, size);
+
+		if (block->live > 0) return;
+
+		for (size_t i = 0; i < s_blocks.size (); ++i) {
+
+			if (s_blocks[i] != block) continue;
+
+			s_blocks.erase (s_blocks.begin () + (long)i);
+			break;
+
+		}
+
+		DestroyBlock (block);
+
+	}
+
+	/** Releases every block. Only valid with the device idle. */
+	static void ReleaseImageBlocks () {
+
+		for (size_t i = 0; i < s_blocks.size (); ++i) DestroyBlock (s_blocks[i]);
+
+		s_blocks.clear ();
+		s_nextBlockSize = 8u << 20;
+
+	}
+
+	// ---------------------------------------------------------------------
 	// Upload queue
 	// ---------------------------------------------------------------------
 
@@ -82,11 +330,21 @@ namespace vulkan {
 
 	static std::vector<PendingUpload> s_pending;
 
+	// One upload slot, not a ring: the staging ring below is the serialization
+	// point, so two command buffers could never overlap anyway. A ring only pays
+	// off together with per-slot staging and a transfer queue.
 	static VkCommandPool s_uploadPool = VK_NULL_HANDLE;
 	static VkCommandBuffer s_uploadBuffer = VK_NULL_HANDLE;
 	static VkFence s_uploadFence = VK_NULL_HANDLE;
 	static VkSemaphore s_uploadSemaphore = VK_NULL_HANDLE;
 	static bool s_uploadInFlight = false;
+	/** The semaphore was signalled but the submit that waits on it has not
+	 *  happened yet. Signalling it twice without a wait in between is a device
+	 *  error, so every path that walks away has to hand it back. */
+	static bool s_uploadSemaphorePending = false;
+	/** Fence waits give up instead of blocking forever: a hung copy would
+	 *  otherwise freeze the loader with no message at all. */
+	static const uint64_t kUploadTimeoutNs = 5000000000ull;
 
 	static VkBuffer s_staging = VK_NULL_HANDLE;
 	static VkDeviceMemory s_stagingMemory = VK_NULL_HANDLE;
@@ -103,16 +361,53 @@ namespace vulkan {
 	// Granularity when a single image does not fit into the ring.
 	static const VkDeviceSize kStagingStep = 4u << 20;
 
+	static bool WaitUploads (const char* where);
 	static VkSemaphore FlushPendingUploads (bool signal);
+	static void ReleaseStaging ();
 
 	static std::map<uint64_t, VkSampler> s_samplers;
+
+	/** Frees the upload objects. Only safe while nothing is in flight: the device
+	 *  teardown path waits for the device before it gets here. */
+	static void ReleaseUpload () {
+
+		State& state = S ();
+		DeviceApi& dev = state.dev;
+
+		if (state.device != VK_NULL_HANDLE) {
+
+			if (s_uploadFence != VK_NULL_HANDLE) dev.DestroyFence (state.device, s_uploadFence, NULL);
+			if (s_uploadSemaphore != VK_NULL_HANDLE) dev.DestroySemaphore (state.device, s_uploadSemaphore, NULL);
+			// Destroying the pool frees the command buffer allocated from it.
+			if (s_uploadPool != VK_NULL_HANDLE) dev.DestroyCommandPool (state.device, s_uploadPool, NULL);
+
+		}
+
+		s_uploadPool = VK_NULL_HANDLE;
+		s_uploadBuffer = VK_NULL_HANDLE;
+		s_uploadFence = VK_NULL_HANDLE;
+		s_uploadSemaphore = VK_NULL_HANDLE;
+		s_uploadInFlight = false;
+		s_uploadSemaphorePending = false;
+		s_burstClosed = true;
+
+	}
 
 	static bool EnsureUploadObjects () {
 
 		State& state = S ();
 		DeviceApi& dev = state.dev;
 
-		if (s_uploadPool != VK_NULL_HANDLE) return true;
+		if (state.device == VK_NULL_HANDLE) return false;
+
+		// Every handle or none: a half created channel used to leave the pool
+		// alive with a null fence, and the next flush re-used a stale handle.
+		if (s_uploadPool != VK_NULL_HANDLE && s_uploadBuffer != VK_NULL_HANDLE
+			&& s_uploadFence != VK_NULL_HANDLE && s_uploadSemaphore != VK_NULL_HANDLE) return true;
+
+		if (s_uploadInFlight) WaitUploads ("recreate");
+
+		ReleaseUpload ();
 
 		VkCommandPoolCreateInfo poolInfo = {};
 		poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -165,27 +460,96 @@ namespace vulkan {
 
 	}
 
-	/** Waits for the previously submitted upload, if there is one in flight. */
-	static bool WaitUploads () {
+	/**
+	 * Waits for the previously submitted upload, if there is one in flight.
+	 *
+	 * A failed wait leaves the flag set on purpose: the GPU may still be reading
+	 * the staging ring, and reusing it would corrupt the copy that is already
+	 * queued. The error carries the place and the result code, so a timeout and
+	 * a lost device do not look the same in the log.
+	 */
+	static bool WaitUploads (const char* where) {
 
 		State& state = S ();
 
 		if (!s_uploadInFlight) return true;
 
-		s_uploadInFlight = false;
+		if (state.device == VK_NULL_HANDLE || s_uploadFence == VK_NULL_HANDLE) {
 
-		if (state.device == VK_NULL_HANDLE || s_uploadFence == VK_NULL_HANDLE) return true;
+			s_uploadInFlight = false;
+			return true;
 
-		if (state.dev.WaitForFences (state.device, 1, &s_uploadFence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+		}
 
-			SetError ("vkWaitForFences(upload) failed");
+		state.upload.waits++;
+
+		VkResult result = state.dev.WaitForFences (state.device, 1, &s_uploadFence, VK_TRUE, kUploadTimeoutNs);
+
+		if (result != VK_SUCCESS) {
+
+			state.upload.failures++;
+
+			std::string message = "vkWaitForFences(upload) failed in ";
+			message += where;
+			message += ": ";
+			message += ResultText (result);
+
+			SetError (message.c_str ());
 			return false;
 
 		}
 
+		s_uploadInFlight = false;
 		state.dev.ResetFences (state.device, 1, &s_uploadFence);
 
 		return true;
+
+	}
+
+	/**
+	 * Takes back a signal whose waiter was never submitted.
+	 *
+	 * A submit with no command buffer and one wait is legal and is the cheapest
+	 * way to consume a binary semaphore, which keeps it usable for the next
+	 * signal. This is the failure path only: it runs when a frame submit did not
+	 * happen, so there is nothing to render anyway.
+	 */
+	static void ConsumeUploadSemaphore () {
+
+		if (!s_uploadSemaphorePending) return;
+
+		s_uploadSemaphorePending = false;
+
+		State& state = S ();
+
+		if (s_uploadSemaphore == VK_NULL_HANDLE || state.device == VK_NULL_HANDLE
+			|| state.graphicsQueue == VK_NULL_HANDLE) return;
+
+		VkPipelineStageFlags stages = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+
+		VkSubmitInfo submitInfo = {};
+		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submitInfo.waitSemaphoreCount = 1;
+		submitInfo.pWaitSemaphores = &s_uploadSemaphore;
+		submitInfo.pWaitDstStageMask = &stages;
+
+		state.dev.QueueSubmit (state.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+
+	}
+
+	/** The frame submit either consumed the upload semaphore or never happened. */
+	void UploadSemaphoreHandled (bool waited) {
+
+		if (!s_uploadSemaphorePending) return;
+
+		if (waited) {
+
+			s_uploadSemaphorePending = false;
+			return;
+
+		}
+
+		ConsumeUploadSemaphore ();
 
 	}
 
@@ -228,7 +592,7 @@ namespace vulkan {
 		// every texture made all uploads of a frame share the same bytes.
 		if (s_burstClosed) {
 
-			if (!WaitUploads ()) return false;
+			if (!WaitUploads ("staging")) return false;
 
 			s_stagingUsed = 0;
 
@@ -246,7 +610,7 @@ namespace vulkan {
 
 			FlushPendingUploads (false);
 
-			if (!WaitUploads ()) return false;
+			if (!WaitUploads ("ringfull")) return false;
 
 			s_stagingUsed = 0;
 			s_burstClosed = false;
@@ -373,7 +737,7 @@ namespace vulkan {
 	 * @param rows NULL queues only the layout transition of a fresh image.
 	 */
 	static bool QueueUpload (VkImage image, bool initialized, const void* rows, int width, int height,
-		uint32_t mipLevels, bool bgra, bool unpremultiply, int bytesPerPixel) {
+		uint32_t mipLevels, bool swizzleBgra, bool unpremultiply, int bytesPerPixel) {
 
 		VkDeviceSize bytes = rows ? (VkDeviceSize)width * (VkDeviceSize)height * (VkDeviceSize)bytesPerPixel : 0;
 		VkDeviceSize offset = 0;
@@ -384,7 +748,7 @@ namespace vulkan {
 
 			if (!StagingAlloc (bytes, &data, &offset) || data == NULL) return false;
 
-			if (bytesPerPixel == 4 && (bgra || unpremultiply)) {
+			if (bytesPerPixel == 4 && (swizzleBgra || unpremultiply)) {
 
 				// Format normalisation happens here, once, so the renderer does not
 				// have to know about byte order.
@@ -397,9 +761,9 @@ namespace vulkan {
 					const unsigned char* from = source + (size_t)i * 4u;
 					unsigned char* to = target + (size_t)i * 4u;
 
-					unsigned char red = bgra ? from[2] : from[0];
+					unsigned char red = swizzleBgra ? from[2] : from[0];
 					const unsigned char green = from[1];
-					unsigned char blue = bgra ? from[0] : from[2];
+					unsigned char blue = swizzleBgra ? from[0] : from[2];
 					const unsigned char alpha = from[3];
 
 					if (unpremultiply && alpha > 0 && alpha < 255) {
@@ -479,9 +843,13 @@ namespace vulkan {
 
 			if (previous < frameState.inFlight.size () && frameState.inFlight[previous] != VK_NULL_HANDLE) {
 
-				if (dev.WaitForFences (state.device, 1, &frameState.inFlight[previous], VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+				VkResult updateWait = dev.WaitForFences (state.device, 1, &frameState.inFlight[previous], VK_TRUE, kUploadTimeoutNs);
 
-					SetError ("vkWaitForFences(update) failed");
+				if (updateWait != VK_SUCCESS) {
+
+					std::string message = "vkWaitForFences(update) failed: ";
+					message += ResultText (updateWait);
+					SetError (message.c_str ());
 					s_pending.clear ();
 					return VK_NULL_HANDLE;
 
@@ -491,7 +859,7 @@ namespace vulkan {
 
 		}
 
-		if (!EnsureUploadObjects () || !WaitUploads ()) {
+		if (!EnsureUploadObjects () || !WaitUploads ("flush")) {
 
 			s_pending.clear ();
 			return VK_NULL_HANDLE;
@@ -550,6 +918,9 @@ namespace vulkan {
 
 				dev.CmdCopyBufferToImage (s_uploadBuffer, s_staging, entry.image,
 					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+				state.upload.copies++;
+				state.upload.bytes += (uint64_t)entry.width * (uint64_t)entry.height * 4ull;
 
 			}
 
@@ -648,6 +1019,10 @@ namespace vulkan {
 
 		}
 
+		// A signal that never got a waiter is taken back first: signalling the same
+		// binary semaphore twice with no wait in between is a device error.
+		if (signal) ConsumeUploadSemaphore ();
+
 		VkSubmitInfo submitInfo = {};
 		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 		submitInfo.commandBufferCount = 1;
@@ -657,15 +1032,26 @@ namespace vulkan {
 		submitInfo.signalSemaphoreCount = signal ? 1 : 0;
 		submitInfo.pSignalSemaphores = signal ? &s_uploadSemaphore : NULL;
 
-		if (dev.QueueSubmit (state.graphicsQueue, 1, &submitInfo, s_uploadFence) != VK_SUCCESS) {
+		VkResult submitResult = dev.QueueSubmit (state.graphicsQueue, 1, &submitInfo, s_uploadFence);
 
-			SetError ("vkQueueSubmit(upload) failed");
+		if (submitResult != VK_SUCCESS) {
+
+			// Nothing was signalled and the fence stayed unsignalled, so the flag
+			// must not claim an upload is in flight.
+			std::string message = "vkQueueSubmit(upload) failed: ";
+			message += ResultText (submitResult);
+			SetError (message.c_str ());
+
+			s_uploadInFlight = false;
+			s_burstClosed = true;
 			return VK_NULL_HANDLE;
 
 		}
 
 		s_uploadInFlight = true;
+		s_uploadSemaphorePending = signal;
 		s_burstClosed = true;
+		state.upload.flushes++;
 
 		return signal ? s_uploadSemaphore : VK_NULL_HANDLE;
 
@@ -796,7 +1182,9 @@ namespace vulkan {
 		state.whiteTexture = 0;
 		s_pending.clear ();
 
-		if (state.device != VK_NULL_HANDLE) WaitUploads ();
+		// The device is idle at this point (the caller waited), so the fence wait
+		// cannot block and the upload objects can go away as a unit.
+		if (state.device != VK_NULL_HANDLE) WaitUploads ("destroytex");
 
 		for (std::map<uint64_t, VkSampler>::iterator it = s_samplers.begin (); it != s_samplers.end (); ++it) {
 
@@ -807,30 +1195,15 @@ namespace vulkan {
 		s_samplers.clear ();
 
 		ReleaseStaging ();
-		s_burstClosed = true;
 
-		if (s_uploadSemaphore != VK_NULL_HANDLE) {
+		// Every texture is gone by now, so the remaining blocks are empty. This is a
+		// safety net: a block with no live image destroys itself in ReleaseImageMemory.
+		ReleaseImageBlocks ();
 
-			if (state.device != VK_NULL_HANDLE) dev.DestroySemaphore (state.device, s_uploadSemaphore, NULL);
-			s_uploadSemaphore = VK_NULL_HANDLE;
-
-		}
-
-		if (s_uploadFence != VK_NULL_HANDLE) {
-
-			if (state.device != VK_NULL_HANDLE) dev.DestroyFence (state.device, s_uploadFence, NULL);
-			s_uploadFence = VK_NULL_HANDLE;
-
-		}
-
-		if (s_uploadPool != VK_NULL_HANDLE) {
-
-			if (state.device != VK_NULL_HANDLE) dev.DestroyCommandPool (state.device, s_uploadPool, NULL);
-
-			s_uploadPool = VK_NULL_HANDLE;
-			s_uploadBuffer = VK_NULL_HANDLE;
-
-		}
+		// One place for the pool, the command buffer, the fence and the semaphore:
+		// a device rebuild that only half released them was the source of the
+		// stale fence handle that used to be waited for forever.
+		ReleaseUpload ();
 
 		if (state.batch.descriptorPool != VK_NULL_HANDLE) {
 
@@ -911,8 +1284,11 @@ namespace vulkan {
 			// The samplers come from the shared cache and stay alive.
 			if (texture->framebuffer != VK_NULL_HANDLE) dev.DestroyFramebuffer (state.device, texture->framebuffer, NULL);
 			if (texture->view != VK_NULL_HANDLE) dev.DestroyImageView (state.device, texture->view, NULL);
-			if (texture->memory != VK_NULL_HANDLE) dev.FreeMemory (state.device, texture->memory, NULL);
 			if (texture->image != VK_NULL_HANDLE) dev.DestroyImage (state.device, texture->image, NULL);
+
+			// The image is gone before its memory is handed back: a block that is
+			// destroyed while an image still points into it is a driver fault.
+			ReleaseImageMemory (texture->block, texture->offset, texture->reserved);
 
 			state.memory.textures -= texture->allocation;
 			if (texture->allocation > 0) state.memory.textureCount--;
@@ -948,9 +1324,13 @@ namespace vulkan {
 		bool nearest = (flags & LIME_VULKAN_TEXTURE_NEAREST) != 0;
 		bool bgra = (flags & LIME_VULKAN_TEXTURE_BGRA) != 0;
 		bool unpremultiply = (flags & LIME_VULKAN_TEXTURE_UNPREMULTIPLY) != 0;
-		bool index8 = (flags & LIME_VULKAN_TEXTURE_INDEX8) != 0;
+ 		bool index8 = (flags & LIME_VULKAN_TEXTURE_INDEX8) != 0;
 		int bytesPerPixel = index8 ? 1 : 4;
-		VkFormat format = index8 ? VK_FORMAT_R8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
+
+		// A BGRA source gets a BGRA image: the shader cannot tell the difference, and
+		// the copy path then never has to touch a pixel (video frames are the case
+		// that used to pay for this on every frame).
+		VkFormat format = index8 ? VK_FORMAT_R8_UNORM : (bgra ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM);
 
 		uint32_t mipLevels = 1;
 
@@ -970,6 +1350,7 @@ namespace vulkan {
 		Texture* texture = new Texture ();
 		texture->width = width;
 		texture->height = height;
+		texture->format = format;
 		texture->bytesPerPixel = bytesPerPixel;
 
 		VkImageCreateInfo imageInfo = {};
@@ -1009,24 +1390,20 @@ namespace vulkan {
 
 		}
 
-		VkMemoryAllocateInfo allocateInfo = {};
-		allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		allocateInfo.allocationSize = requirements.size;
-		allocateInfo.memoryTypeIndex = memoryType;
+		if (!AllocateImageMemory (requirements, memoryType, &texture->block, &texture->offset, &texture->reserved)) {
 
-		if (dev.AllocateMemory (state.device, &allocateInfo, NULL, &texture->memory) != VK_SUCCESS) {
-
-			SetError ("vkAllocateMemory(texture) failed");
+			SetError ("could not suballocate memory for a texture");
 			DiscardTexture (texture);
 			return 0;
 
 		}
 
+		texture->memory = texture->block->memory;
 		texture->allocation = requirements.size;
 		state.memory.textures += requirements.size;
 		state.memory.textureCount++;
 
-		if (dev.BindImageMemory (state.device, texture->image, texture->memory, 0) != VK_SUCCESS) {
+		if (dev.BindImageMemory (state.device, texture->image, texture->memory, texture->offset) != VK_SUCCESS) {
 
 			SetError ("vkBindImageMemory failed");
 			DiscardTexture (texture);
@@ -1034,7 +1411,9 @@ namespace vulkan {
 
 		}
 
-		if (!QueueUpload (texture->image, false, rgba, width, height, mipLevels, bgra, unpremultiply, bytesPerPixel)) {
+		// The image format already matches a BGRA source, so only an unpremultiply
+		// pass is left (and only when the caller asked for one).
+		if (!QueueUpload (texture->image, false, rgba, width, height, mipLevels, false, unpremultiply, bytesPerPixel)) {
 
 			DiscardTexture (texture);
 			return 0;
@@ -1136,7 +1515,9 @@ namespace vulkan {
 		bool bgra = (flags & LIME_VULKAN_TEXTURE_BGRA) != 0;
 		bool unpremultiply = (flags & LIME_VULKAN_TEXTURE_UNPREMULTIPLY) != 0;
 
-		if (!QueueUpload (texture->image, true, rgba, texture->width, texture->height, 1, bgra, unpremultiply, texture->bytesPerPixel)) {
+		bool swizzle = bgra != (texture->format == VK_FORMAT_B8G8R8A8_UNORM);
+
+		if (!QueueUpload (texture->image, true, rgba, texture->width, texture->height, 1, swizzle, unpremultiply, texture->bytesPerPixel)) {
 
 			return 0;
 
@@ -1210,8 +1591,9 @@ namespace vulkan {
 
 		if (texture->framebuffer != VK_NULL_HANDLE) dev.DestroyFramebuffer (state.device, texture->framebuffer, NULL);
 		if (texture->view != VK_NULL_HANDLE) dev.DestroyImageView (state.device, texture->view, NULL);
-		if (texture->memory != VK_NULL_HANDLE) dev.FreeMemory (state.device, texture->memory, NULL);
 		if (texture->image != VK_NULL_HANDLE) dev.DestroyImage (state.device, texture->image, NULL);
+
+		ReleaseImageMemory (texture->block, texture->offset, texture->reserved);
 
 		// Freed memory has to leave the totals as well, or lime_vulkan_batch_stats keeps
 		// reporting every texture this session ever retired.
@@ -1256,6 +1638,7 @@ namespace vulkan {
 		Texture* texture = new Texture ();
 		texture->width = width;
 		texture->height = height;
+		texture->format = state.swapchainFormat;
 		texture->bytesPerPixel = 4;
 		// Never drawn into yet, so the first pass may discard the contents.
 		texture->layout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -1296,24 +1679,20 @@ namespace vulkan {
 
 		}
 
-		VkMemoryAllocateInfo allocateInfo = {};
-		allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-		allocateInfo.allocationSize = requirements.size;
-		allocateInfo.memoryTypeIndex = memoryType;
+		if (!AllocateImageMemory (requirements, memoryType, &texture->block, &texture->offset, &texture->reserved)) {
 
-		if (dev.AllocateMemory (state.device, &allocateInfo, NULL, &texture->memory) != VK_SUCCESS) {
-
-			SetError ("vkAllocateMemory(target) failed");
+			SetError ("could not suballocate memory for a render target");
 			DiscardTexture (texture);
 			return 0;
 
 		}
 
+		texture->memory = texture->block->memory;
 		texture->allocation = requirements.size;
 		state.memory.textures += requirements.size;
 		state.memory.textureCount++;
 
-		if (dev.BindImageMemory (state.device, texture->image, texture->memory, 0) != VK_SUCCESS) {
+		if (dev.BindImageMemory (state.device, texture->image, texture->memory, texture->offset) != VK_SUCCESS) {
 
 			SetError ("vkBindImageMemory(target) failed");
 			DiscardTexture (texture);
