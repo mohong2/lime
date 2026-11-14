@@ -1,0 +1,27 @@
+# Build output
+bin/
+build/
+native/shaders/out/
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+
+# Generated hxcpp tree from tests/haxe/build.ps1
+tests/haxe/build/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editors
+.vs/
+.vscode/
+*.user
+
+# Runtime logs
+logs/
+*.log

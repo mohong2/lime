@@ -46,6 +46,12 @@
 	<set name="LIME_SDL_ANGLE" value="1" if="windows angle" unless="static_link" />
 	<set name="LIME_SDL_ANGLE" value="1" if="winrt" />
 	<set name="LIME_TINYFILEDIALOGS" value="1" if="windows || mac || linux" unless="winrt || emscripten" />
+	<!-- Vulkan renderer, linked into the shared library on Windows. Nothing is
+	     required at runtime: Vulkan is resolved on demand, so a machine without
+	     a driver reports "unavailable" and the caller stays on OpenGL.
+	     -Dlime-vulkan-off leaves it out of the library. -->
+	<set name="LIME_VULKAN" value="1" if="windows" unless="lime-vulkan-off || winrt || emscripten" />
+
 	<set name="LIME_VORBIS" value="1" />
 	<!-- <set name="LIME_VPX" value="1" />
 	<set name="LIME_WEBM" value="1" /> -->
@@ -373,6 +379,29 @@
 		<file name="src/utils/Bytes.cpp" />
 
 		<file name="src/hx/CFFIExt.cpp" />
+
+		<!-- Vulkan renderer (see vulkan/README.md). Windows only: the backend
+		     creates its own swapchain on an HWND and presents outside SDL.
+		     The sources are part of the shared library, so an application only
+		     needs -Dseiun_vulkan, no extra dll. -->
+		<section if="LIME_VULKAN">
+
+			<compilerflag value="-I../vulkan/native/include" />
+			<compilerflag value="-I../vulkan/third_party" />
+
+			<file name="../vulkan/native/src/loader.cpp" />
+			<file name="../vulkan/native/src/device.cpp" />
+			<file name="../vulkan/native/src/surface_win32.cpp" />
+			<file name="../vulkan/native/src/window_win32.cpp" />
+			<file name="../vulkan/native/src/image.cpp" />
+			<file name="../vulkan/native/src/batch.cpp" />
+			<file name="../vulkan/native/src/glsl.cpp" />
+			<file name="../vulkan/native/src/compile.cpp" />
+			<file name="../vulkan/native/src/program.cpp" />
+			<file name="../vulkan/native/src/api.cpp" />
+			<file name="../vulkan/native/src/haxe_api.cpp" />
+
+		</section>
 
 	</files>
 

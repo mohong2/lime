@@ -38,6 +38,10 @@
 	<haxeflag name="--macro" value="allowPackage('sys')" if="air" />
 	<sample path="samples" unless="openfl" />
 
+	<!-- Vulkan renderer, opt-in through -Dseiun_vulkan. The native half is always
+	     part of the shared library; this only adds the Haxe side. -->
+	<source path="vulkan/haxe" if="seiun_vulkan" />
+
 	<haxelib name="nodejs" if="nodejs" />
 	<haxelib name="format" if="java" />
 
