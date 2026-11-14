@@ -56,6 +56,14 @@ class VkTextures
 
 	static var graphicBytes:Map<FlxGraphic, Float> = new Map ();
 	static var bitmapBytes:Map<BitmapData, Float> = new Map ();
+
+	// Last frame each graphic was drawn, for the memory budget below.
+	static var graphicFrame:Map<FlxGraphic, Int> = new Map ();
+
+	// --vulkan-texbudget=MB. A negative value means "no budget": textures then live
+	// as long as their graphic does, which is what the cache did before.
+	static var budgetBytes:Float = -1;
+	public static var budgetEvicted(default, null):Int = 0;
 	static var frame:Int = 0;
 	static var nextSweep:Int = SWEEP_INTERVAL;
 
@@ -86,6 +94,8 @@ class VkTextures
 		var bitmap = graphic.bitmap;
 
 		if (bitmap == null) return skip ("bitmap-null", graphic);
+
+		graphicFrame.set (graphic, frame);
 
 		if (noCache) forget (graphic);
 
@@ -320,6 +330,7 @@ class VkTextures
 		paletteState.remove (graphic);
 		versions.remove (graphic);
 		sources.remove (graphic);
+		graphicFrame.remove (graphic);
 
 		if (handle == null) return;
 
@@ -352,6 +363,64 @@ class VkTextures
 		frame++;
 
 		if (frame >= nextSweep) sweep (false);
+
+		enforceBudget ();
+	}
+
+	/**
+	 * Evicts the least recently drawn textures once the resident total goes past
+	 * --vulkan-texbudget.
+	 *
+	 * Only graphics that were not drawn in the last two frames are candidates: a
+	 * texture on screen would be re-uploaded immediately, which is the one thing a
+	 * budget must not cause. Anything that cannot be restored (no CPU pixels left
+	 * and no restorable bitmap) is left alone rather than evicted into a hole.
+	 */
+	static function enforceBudget():Void
+	{
+		if (budgetBytes <= 0) return;
+
+		var total = rgbaBytes + indexBytes;
+
+		if (total <= budgetBytes) return;
+
+		var candidates:Array<FlxGraphic> = [];
+
+		for (graphic in handles.keys ())
+		{
+			if (graphic == null || graphic.bitmap == null) continue;
+
+			var last:Null<Int> = graphicFrame.get (graphic);
+
+			if (last != null && frame - last <= 2) continue;
+
+			if (graphic.bitmap.image == null && !graphic.bitmap.restorable) continue;
+
+			candidates.push (graphic);
+		}
+
+		candidates.sort (function(a, b)
+		{
+			var fa:Null<Int> = graphicFrame.get (a);
+			var fb:Null<Int> = graphicFrame.get (b);
+
+			return (fa == null ? -1 : fa) - (fb == null ? -1 : fb);
+		});
+
+		// Down to 90% of the budget, so the next few uploads do not immediately
+		// trigger another eviction round.
+		var target = budgetBytes * 0.9;
+
+		for (graphic in candidates)
+		{
+			if (total <= target) break;
+
+			var bytes:Null<Float> = graphicBytes.get (graphic);
+			total -= (bytes == null ? 0.0 : bytes);
+
+			forget (graphic);
+			budgetEvicted++;
+		}
 	}
 
 	public static function sweep(all:Bool):Void
@@ -404,6 +473,15 @@ class VkTextures
 			if (arg == "--vulkan-no-cache") noCache = true;
 			if (arg == "--vulkan-texstats") texStats = true;
 			if (arg == "--vulkan-texdump") texDump = "logs/texdump";
+
+			if (StringTools.startsWith (arg, "--vulkan-texbudget="))
+			{
+				var megabytes:Float = Std.parseFloat (arg.substr ("--vulkan-texbudget=".length));
+
+				// Bytes, and never below a few megabytes: a budget of 0 would evict
+				// every texture the moment it is created.
+				if (megabytes >= 8) budgetBytes = megabytes * 1048576.0;
+			}
 		}
 	}
 
@@ -617,7 +695,9 @@ class VkTextures
 			+ " textures=" + textureCount + " cached=" + cached + " uploaded=" + uploaded
 			+ " missed=" + missed + " unsupported=" + unsupported + " evicted=" + evicted
 			+ " restored=" + restored + " pixelless=" + pixelless + " dropped=" + dropped
-			+ " updated=" + updated + why;
+			+ " updated=" + updated
+			+ (budgetBytes > 0 ? " budget=" + mb (budgetBytes) + "MB budgetEvicted=" + budgetEvicted : "")
+			+ why;
 	}
 }
 
