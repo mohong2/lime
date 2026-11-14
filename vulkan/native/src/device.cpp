@@ -3,8 +3,153 @@
 #include "triangle_spirv.h"
 
 #include <algorithm>
+#include <cstdio>
+
+#if !defined(LIME_VULKAN_WINDOWS)
+#include <sys/stat.h>
+#endif
 
 namespace vulkan {
+
+	// ---------------------------------------------------------------------
+	// Pipeline cache
+	//
+	// A driver compiles a pipeline the first time it is used, which is the ~20 ms
+	// first frame the perf harness sees. vkPipelineCache lets it reuse that work
+	// across runs; the data is validated by the driver against the device and
+	// driver UUIDs, so a stale file is ignored rather than trusted.
+	//
+	// Kept in cache/ next to the executable (relative path, like the shader cache).
+	// ---------------------------------------------------------------------
+
+	static const char* kPipelineCachePath = "cache/pipelines.bin";
+	/** Above this the file is not worth rewriting: a huge cache slows every start. */
+	static const VkDeviceSize kPipelineCacheMax = 8u << 20;
+
+	static void EnsureCacheDirectory () {
+
+		// Cheap and non-fatal: without a directory the cache simply stays in memory.
+		#if defined(LIME_VULKAN_WINDOWS)
+		CreateDirectoryA ("cache", NULL);
+		#else
+		mkdir ("cache", 0777);
+		#endif
+
+	}
+
+	bool CreatePipelineCache () {
+
+		State& state = S ();
+		DeviceApi& dev = state.dev;
+
+		DestroyPipelineCache ();
+
+		if (state.device == VK_NULL_HANDLE || !dev.CreatePipelineCache) return false;
+
+		EnsureCacheDirectory ();
+
+		std::vector<unsigned char> initial;
+
+		if (FILE* file = fopen (kPipelineCachePath, "rb")) {
+
+			fseek (file, 0, SEEK_END);
+			long size = ftell (file);
+			fseek (file, 0, SEEK_SET);
+
+			if (size > 0 && (VkDeviceSize)size <= kPipelineCacheMax) {
+
+				initial.resize ((size_t)size);
+
+				if (fread (initial.data (), 1, (size_t)size, file) != (size_t)size) initial.clear ();
+
+			}
+
+			fclose (file);
+
+		}
+
+		VkPipelineCacheCreateInfo cacheInfo = {};
+		cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+		cacheInfo.pInitialData = initial.empty () ? NULL : initial.data ();
+		cacheInfo.initialDataSize = initial.size ();
+
+		VkResult result = dev.CreatePipelineCache (state.device, &cacheInfo, NULL, &state.pipelineCache);
+
+		if (result != VK_SUCCESS && !initial.empty ()) {
+
+			// The file did not match this driver. Start empty and overwrite it later
+			// instead of failing: a stale cache is not an error worth a dialog.
+			Log ("pipeline cache rejected (%s), starting empty", ResultText (result));
+
+			remove (kPipelineCachePath);
+
+			cacheInfo.pInitialData = NULL;
+			cacheInfo.initialDataSize = 0;
+
+			result = dev.CreatePipelineCache (state.device, &cacheInfo, NULL, &state.pipelineCache);
+
+		}
+
+		if (result != VK_SUCCESS) {
+
+			state.pipelineCache = VK_NULL_HANDLE;
+			Log ("no pipeline cache (%s); every start recompiles", ResultText (result));
+			return false;
+
+		}
+
+		return true;
+
+	}
+
+	/** Writes the cache back. Called before the device goes away, never on a hot path. */
+	void SavePipelineCache () {
+
+		State& state = S ();
+		DeviceApi& dev = state.dev;
+
+		if (state.pipelineCache == VK_NULL_HANDLE || state.device == VK_NULL_HANDLE
+			|| !dev.GetPipelineCacheData) return;
+
+		// vkGetPipelineCacheData takes size_t, not VkDeviceSize: the Vulkan header
+		// spells these out per platform and they are not the same type on Windows.
+		size_t size = 0;
+
+		if (dev.GetPipelineCacheData (state.device, state.pipelineCache, &size, NULL) != VK_SUCCESS) return;
+
+		if (size == 0 || (VkDeviceSize)size > kPipelineCacheMax) return;
+
+		std::vector<unsigned char> data (size);
+
+		if (dev.GetPipelineCacheData (state.device, state.pipelineCache, &size, data.data ()) != VK_SUCCESS) return;
+
+		EnsureCacheDirectory ();
+
+		FILE* file = fopen (kPipelineCachePath, "wb");
+
+		if (!file) return;
+
+		fwrite (data.data (), 1, (size_t)size, file);
+		fclose (file);
+
+		Log ("pipeline cache written: %.1f KB", (double)size / 1024.0);
+
+	}
+
+	void DestroyPipelineCache () {
+
+		State& state = S ();
+
+		if (state.pipelineCache != VK_NULL_HANDLE && state.device != VK_NULL_HANDLE
+			&& state.dev.DestroyPipelineCache) {
+
+			state.dev.DestroyPipelineCache (state.device, state.pipelineCache, NULL);
+
+		}
+
+		state.pipelineCache = VK_NULL_HANDLE;
+
+	}
 
 	// ---------------------------------------------------------------------
 	// Vertex format: position.xy + color.rgb (20 bytes, two shader locations)
@@ -775,7 +920,7 @@ namespace vulkan {
 		pipelineInfo.renderPass = state.renderPass;
 		pipelineInfo.subpass = 0;
 
-		VkResult result = dev.CreateGraphicsPipelines (state.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &state.pipeline);
+		VkResult result = dev.CreateGraphicsPipelines (state.device, state.pipelineCache, 1, &pipelineInfo, NULL, &state.pipeline);
 
 		dev.DestroyShaderModule (state.device, vertexModule, NULL);
 		dev.DestroyShaderModule (state.device, fragmentModule, NULL);
@@ -1066,6 +1211,12 @@ namespace vulkan {
 		state.dev.GetDeviceQueue (state.device, graphicsFamily, 0, &state.graphicsQueue);
 		state.dev.GetDeviceQueue (state.device, presentFamily, 0, &state.presentQueue);
 
+		// GPU timestamps: optional, and the stats text says so when they are missing.
+		CreatePerfQueries ();
+
+		// Before any pipeline exists, so the first one already hits the cache.
+		CreatePipelineCache ();
+
 		// Descriptor layout, pool and the 1x1 white texture are independent of the swapchain and follow the device.
 		if (!CreateProgramResources ()) {
 
@@ -1102,6 +1253,12 @@ namespace vulkan {
 
 			if (state.dev.DeviceWaitIdle) state.dev.DeviceWaitIdle (state.device);
 
+			// Written while the pipelines still exist: the cache only holds data about
+			// the objects that were created with it.
+			SavePipelineCache ();
+
+			DestroyPerfQueries ();
+
 			// Order matters: pipelines reference the render pass and the descriptor set
 			// layouts, so the batch pipelines go first, then the swapchain and render
 			// passes, then the descriptors. User programs as well, since their pipelines
@@ -1118,6 +1275,8 @@ namespace vulkan {
 				state.commandPool = VK_NULL_HANDLE;
 
 			}
+
+			DestroyPipelineCache ();
 
 			if (state.dev.DestroyDevice) state.dev.DestroyDevice (state.device, NULL);
 
@@ -1246,6 +1405,10 @@ namespace vulkan {
 
 		}
 
+		// The same fence that made the slot safe also makes its GPU timestamps
+		// readable: pair them with the CPU half that was stored when it presented.
+		PerfCollectFrame (state.frameIndex);
+
 		// The fence of this frame slot has passed, so the commands that used it last
 		// have finished: only now is it safe to recycle its descriptor sets and the
 		// uniform ring buffer.
@@ -1298,6 +1461,8 @@ namespace vulkan {
 			return false;
 
 		}
+
+		PerfBeginFrame (commandBuffer, state.frameIndex);
 
 		// The render pass is opened by the first draw instead of here: a frame that
 		// draws a filtered camera goes offscreen first, and the window pass must not
@@ -1372,6 +1537,8 @@ namespace vulkan {
 
 		state.inFrame = false;
 
+		PerfEndFrame (commandBuffer, state.frameIndex);
+
 		if (dev.EndCommandBuffer (commandBuffer) != VK_SUCCESS) {
 
 			SetError ("vkEndCommandBuffer failed");
@@ -1412,6 +1579,11 @@ namespace vulkan {
 
 		VkResult submitResult = dev.QueueSubmit (state.graphicsQueue, 1, &submitInfo, fence);
 
+		// The upload semaphore is either consumed by this submit or handed back:
+		// a binary semaphore cannot be signalled twice without a wait, and the
+		// failure path below is exactly where a waiter goes missing.
+		UploadSemaphoreHandled (submitResult == VK_SUCCESS);
+
 		if (submitResult != VK_SUCCESS) {
 
 			std::string message = "vkQueueSubmit failed: ";
@@ -1443,6 +1615,10 @@ namespace vulkan {
 			return false;
 
 		}
+
+		// The CPU half of this frame's sample; the GPU half arrives when the slot is
+		// reused two frames from now.
+		PerfCloseFrame (state.frameIndex);
 
 		state.frameIndex = (state.frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
 		state.framesPresented++;

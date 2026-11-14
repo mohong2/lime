@@ -398,6 +398,7 @@
 			<file name="../vulkan/native/src/glsl.cpp" />
 			<file name="../vulkan/native/src/compile.cpp" />
 			<file name="../vulkan/native/src/program.cpp" />
+			<file name="../vulkan/native/src/perf.cpp" />
 			<file name="../vulkan/native/src/api.cpp" />
 			<file name="../vulkan/native/src/haxe_api.cpp" />
 

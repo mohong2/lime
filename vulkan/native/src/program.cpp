@@ -40,7 +40,7 @@ namespace vulkan {
 		premultiplied (true),
 		uniformSize (0) {
 
-		for (int i = 0; i < 6; ++i) pipelines[i] = VK_NULL_HANDLE;
+		for (int i = 0; i < BLEND_COUNT; ++i) pipelines[i] = VK_NULL_HANDLE;
 		for (int i = 0; i < 16; ++i) samplerTextures[i] = 0;
 
 	}
@@ -422,7 +422,7 @@ namespace vulkan {
 			pipelineInfo.renderPass = state.renderPass;
 			pipelineInfo.subpass = 0;
 
-			if (dev.CreateGraphicsPipelines (state.device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &program->pipelines[blend]) != VK_SUCCESS) {
+			if (dev.CreateGraphicsPipelines (state.device, state.pipelineCache, 1, &pipelineInfo, NULL, &program->pipelines[blend]) != VK_SUCCESS) {
 
 				program->pipelines[blend] = VK_NULL_HANDLE;
 				return false;
@@ -507,7 +507,7 @@ namespace vulkan {
 
 			if (state.device != VK_NULL_HANDLE) {
 
-				for (int i = 0; i < 6; ++i) {
+				for (int i = 0; i < BLEND_COUNT; ++i) {
 
 					if (program->pipelines[i] != VK_NULL_HANDLE) {
 
@@ -702,7 +702,7 @@ namespace vulkan {
 
 		bool ok = true;
 
-		for (int blend = 0; blend < 6 && ok; ++blend) {
+		for (int blend = 0; blend < BLEND_COUNT && ok; ++blend) {
 
 			ok = CreateProgramPipeline (program, blend, vertexModule, fragmentModule);
 
@@ -818,7 +818,7 @@ namespace vulkan {
 
 		if (!program || !texture || !commandBuffer) return false;
 
-		if (blend < 0 || blend > 5) blend = LIME_VULKAN_BLEND_NORMAL;
+		if (blend < 0 || blend >= BLEND_COUNT) blend = LIME_VULKAN_BLEND_NORMAL;
 
 		VkPipeline pipeline = program->pipelines[blend];
 

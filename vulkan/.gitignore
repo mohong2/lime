@@ -25,3 +25,6 @@ __pycache__/
 # Runtime logs
 logs/
 *.log
+
+# Runtime caches (SPIR-V, VkPipelineCache)
+cache/

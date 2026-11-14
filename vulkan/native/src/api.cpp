@@ -185,6 +185,7 @@ extern "C" {
 
 	int lime_vulkan_probe_window (void* nativeWindow, int width, int height, const lime_vulkan_options* options) {
 
+
 		if (options) vulkan::S ().options = *options;
 
 		vulkan::S ().dialogEnabled = vulkan::S ().options.fallbackDialog != 0;
@@ -209,7 +210,8 @@ extern "C" {
 
 		}
 
-		if (!vulkan::AttachDevice (nativeWindow, width, height, false)) return 0;
+
+
 
 		// Torn down right after the probe: only deviceName and the capability verdict survive, no VRAM and no window.
 		vulkan::S ().attached = false;
@@ -582,6 +584,9 @@ extern "C" {
 		batch.droppedColorOffsets = 0;
 		batch.droppedSegments = 0;
 		batch.drawnVertices = 0;
+		batch.bindTextures = 0;
+		batch.bindPipelines = 0;
+		batch.bindScissors = 0;
 		batch.drawRecordCount = 0;
 		batch.noteCount = 0;
 
@@ -1124,11 +1129,26 @@ extern "C" {
 
 		vulkan::State::MemoryTotals& memory = vulkan::S ().memory;
 
-		char text[2048];
-		snprintf (text, sizeof (text), "memTex=%.1fMB/%llu memStage=%.1fMB\ndrawCalls=%u\nquads=%u\nvertices=%u\ndrawn=%u\ncapacity=%u\ndropped=%u\ndroppedColorOffsets=%u\ndroppedSegments=%u\n",
+		char text[3072];
+		snprintf (text, sizeof (text), "memTex=%.1fMB/%llu memStage=%.1fMB\nmemReserved=%.1fMB\nmemAllocs=%llu\n"
+			"drawCalls=%u\nquads=%u\nvertices=%u\ndrawn=%u\ncapacity=%u\ndropped=%u\ndroppedColorOffsets=%u\ndroppedSegments=%u\n",
 			memory.textures / 1048576.0, (unsigned long long)memory.textureCount, memory.staging / 1048576.0,
+			memory.reserved / 1048576.0, (unsigned long long)memory.allocations,
 			batch.drawCalls, batch.frameVertices / 4, batch.frameVertices, batch.drawnVertices, batch.vertexCapacity,
 			batch.droppedVertices, batch.droppedColorOffsets, batch.droppedSegments);
+
+		// Frame timings and the numbers a later optimization is judged by. Percentiles
+		// are recomputed here, never per frame.
+		{
+			char perf[1024] = { 0 };
+
+			if (vulkan::PerfText (perf, (int)sizeof (perf)) > 0) {
+
+				size_t used = strlen (text);
+				if (used + strlen (perf) + 1 < sizeof (text)) strcat (text, perf);
+
+			}
+		}
 
 		// Record of every draw segment, to locate 'which one did not appear'; it lines up with the Haxe submit order.
 		for (uint32_t i = 0; i < batch.drawRecordCount; ++i) {

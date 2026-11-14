@@ -76,7 +76,7 @@ $includes = @("/I$inc", "/I$src", "/I$third")
 
 # haxe_api.cpp is not listed on purpose: it binds to the hxcpp runtime, which
 # only exists inside Lime.ndll.
-$sources = @('loader.cpp', 'device.cpp', 'surface_win32.cpp', 'window_win32.cpp', 'image.cpp', 'batch.cpp', 'glsl.cpp', 'compile.cpp', 'program.cpp', 'api.cpp') | ForEach-Object { Join-Path $src $_ }
+$sources = @('loader.cpp', 'device.cpp', 'surface_win32.cpp', 'window_win32.cpp', 'image.cpp', 'batch.cpp', 'glsl.cpp', 'compile.cpp', 'program.cpp', 'perf.cpp', 'api.cpp') | ForEach-Object { Join-Path $src $_ }
 
 Remove-Item -Path (Join-Path $obj '*.obj') -Force -ErrorAction SilentlyContinue
 

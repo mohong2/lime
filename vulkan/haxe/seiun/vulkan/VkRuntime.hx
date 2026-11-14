@@ -59,6 +59,10 @@ class VkRuntime
 			return false;
 		}
 
+		// A driver whose timestamps are slow or wrong can turn them off; the native
+		// side then reports gpuSupported=0 instead of a fake GPU time.
+		if (flag ("--vulkan-no-gputime")) Sys.putEnv ("SEIUN_VULKAN_NO_GPUTIME", "1");
+
 		var verboseMode = verbose || flag ("--vulkan-verbose") || envTrue ("SEIUN_VULKAN_VERBOSE");
 		var validation = flag ("--vulkan-validation") || envTrue ("SEIUN_VULKAN_VALIDATION");
 

@@ -334,6 +334,14 @@ namespace vulkan {
 		LIME_VULKAN_LOAD_DEV (WaitForFences);
 		LIME_VULKAN_LOAD_DEV (ResetFences);
 		LIME_VULKAN_LOAD_DEV (FreeCommandBuffers);
+		LIME_VULKAN_LOAD_DEV (CreatePipelineCache);
+		LIME_VULKAN_LOAD_DEV (DestroyPipelineCache);
+		LIME_VULKAN_LOAD_DEV (GetPipelineCacheData);
+		LIME_VULKAN_LOAD_DEV (CreateQueryPool);
+		LIME_VULKAN_LOAD_DEV (DestroyQueryPool);
+		LIME_VULKAN_LOAD_DEV (CmdResetQueryPool);
+		LIME_VULKAN_LOAD_DEV (CmdWriteTimestamp);
+		LIME_VULKAN_LOAD_DEV (GetQueryPoolResults);
 
 		#undef LIME_VULKAN_LOAD_DEV
 
