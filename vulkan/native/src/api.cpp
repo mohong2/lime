@@ -1228,6 +1228,23 @@ extern "C" {
 
 	}
 
+	int lime_vulkan_set_android_window (void* nativeWindow) {
+
+#if defined(LIME_VULKAN_ANDROID)
+
+		vulkan::SetAndroidWindow (nativeWindow);
+		return 1;
+
+#else
+
+		// Kept in the ABI on every platform so the header is the same everywhere.
+		(void)nativeWindow;
+		return 0;
+
+#endif
+
+	}
+
 	int lime_vulkan_release_gl (void) {
 
 #if defined(LIME_VULKAN_WINDOWS)

@@ -546,6 +546,8 @@ namespace vulkan {
 	void* FindProcessWindow (unsigned int pid);
 	/** The main window of this process. */
 	void* SelfWindow ();
+	/** Android: the ANativeWindow the host handed over; a no-op elsewhere. */
+	void SetAndroidWindow (void* window);
 	bool WindowClientSize (void* window, int* width, int* height);
 	int WindowTitle (void* window, char* out, int capacity);
 	int SuspendProcess (unsigned int pid);

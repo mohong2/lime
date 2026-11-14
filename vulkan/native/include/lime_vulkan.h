@@ -313,9 +313,26 @@ extern "C" {
 	// ---------------------------------------------------------------------
 	// Window discovery
 	//
-	// Plain Win32, never touches Vulkan, so the attach tool and the engine share
-	// it. Nothing found returns 0 / NULL: no abort, no dialog.
+	// Per platform, never touching Vulkan, so the attach tool and the engine
+	// share it. Nothing found returns 0 / NULL: no abort, no dialog.
+	//
+	//   Windows   the largest visible top level window of the process
+	//   Linux     the X11 window whose _NET_WM_PID is this process
+	//   Android   the ANativeWindow handed over by the function below
 	// ---------------------------------------------------------------------
+
+	/**
+	 * Android: registers the ANativeWindow the game draws into.
+	 *
+	 * Nothing can be enumerated there: the activity owns the window and only the
+	 * host (SDL or the Java glue) knows the pointer, so it is handed over instead
+	 * of guessed. Call it again after the surface is re-created, and pass NULL
+	 * when the activity loses it; the backend then reports 'unavailable' instead
+	 * of drawing into a dead pointer.
+	 *
+	 * @return 1 when the window was stored, 0 on a platform without this concept
+	 */
+	LIME_VULKAN_API int lime_vulkan_set_android_window (void* nativeWindow);
 
 	/** Finds a pid by process name (with extension, case insensitive); 0 when not found. */
 	LIME_VULKAN_API unsigned int lime_vulkan_process_id (const char* exeName);
@@ -477,7 +494,11 @@ extern "C" {
 	// call. Purely additive, no existing entry point changed.
 	// ---------------------------------------------------------------------
 
-	/** The main window of this process (largest visible top level window); NULL when not found. */
+	/**
+	 * The main window of this process; NULL when not found. Windows: the largest
+	 * visible top level window. Linux: the X11 window owned by this pid. Android:
+	 * the window registered with lime_vulkan_set_android_window.
+	 */
 	LIME_VULKAN_API void* lime_vulkan_self_window (void);
 
 	/**

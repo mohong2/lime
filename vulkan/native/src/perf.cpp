@@ -3,6 +3,16 @@
 #include <algorithm>
 #include <cstdlib>
 
+// Platform clock. Included here, not inside namespace vulkan: a C++ standard
+// header pulled into a namespace is broken by definition (libc++ then looks for
+// std::false_type in the wrong scope), which is a hard error for clang on
+// Linux and Android while MSVC happens to accept the Win32 half.
+#if defined(LIME_VULKAN_WINDOWS)
+#include <windows.h>
+#else
+#include <chrono>
+#endif
+
 // Frame timings.
 //
 // Two numbers per frame, both reported as percentiles over a rolling window:
@@ -25,8 +35,6 @@ namespace vulkan {
 
 #if defined(LIME_VULKAN_WINDOWS)
 
-	#include <windows.h>
-
 	double PerfNow () {
 
 		static LARGE_INTEGER frequency;
@@ -47,8 +55,6 @@ namespace vulkan {
 	}
 
 #else
-
-	#include <chrono>
 
 	double PerfNow () {
 

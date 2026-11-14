@@ -13,7 +13,7 @@ import cpp.Pointer;
 import cpp.UInt32;
 import cpp.UInt64;
 
-#if (seiun_vulkan && cpp && windows)
+#if (seiun_vulkan && cpp && (windows || linux || android))
 
 class VkExtern
 {

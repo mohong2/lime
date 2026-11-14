@@ -4,7 +4,7 @@ package seiun.vulkan;
 
 import cpp.Pointer;
 
-#if (seiun_vulkan && cpp && windows)
+#if (seiun_vulkan && cpp && (windows || linux || android))
 
 class VkNative
 {

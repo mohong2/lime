@@ -46,11 +46,13 @@
 	<set name="LIME_SDL_ANGLE" value="1" if="windows angle" unless="static_link" />
 	<set name="LIME_SDL_ANGLE" value="1" if="winrt" />
 	<set name="LIME_TINYFILEDIALOGS" value="1" if="windows || mac || linux" unless="winrt || emscripten" />
-	<!-- Vulkan renderer, linked into the shared library on Windows. Nothing is
-	     required at runtime: Vulkan is resolved on demand, so a machine without
-	     a driver reports "unavailable" and the caller stays on OpenGL.
+	<!-- Vulkan renderer, linked into the shared library on every platform that has
+	     a Vulkan driver: Windows (Win32 surface), Linux (X11) and Android
+	     (ANativeWindow). macOS and iOS have no Vulkan, so they build without it.
+	     Nothing is required at runtime: Vulkan is resolved on demand, so a machine
+	     without a driver reports "unavailable" and the caller stays on OpenGL.
 	     -Dlime-vulkan-off leaves it out of the library. -->
-	<set name="LIME_VULKAN" value="1" if="windows" unless="lime-vulkan-off || winrt || emscripten" />
+	<set name="LIME_VULKAN" value="1" if="windows || linux || android" unless="lime-vulkan-off || winrt || emscripten" />
 
 	<set name="LIME_VORBIS" value="1" />
 	<!-- <set name="LIME_VPX" value="1" />
@@ -380,10 +382,11 @@
 
 		<file name="src/hx/CFFIExt.cpp" />
 
-		<!-- Vulkan renderer (see vulkan/README.md). Windows only: the backend
-		     creates its own swapchain on an HWND and presents outside SDL.
-		     The sources are part of the shared library, so an application only
-		     needs -Dseiun_vulkan, no extra dll. -->
+		<!-- Vulkan renderer (see vulkan/README.md). The backend creates its own
+		     swapchain on the native window and presents outside SDL. The portable
+		     half is shared; surface_*.cpp / window_*.cpp are the platform layer
+		     (Win32, X11, Android). The sources are part of the shared library, so
+		     an application only needs -Dseiun_vulkan, no extra dll. -->
 		<section if="LIME_VULKAN">
 
 			<compilerflag value="-I../vulkan/native/include" />
@@ -391,8 +394,12 @@
 
 			<file name="../vulkan/native/src/loader.cpp" />
 			<file name="../vulkan/native/src/device.cpp" />
-			<file name="../vulkan/native/src/surface_win32.cpp" />
-			<file name="../vulkan/native/src/window_win32.cpp" />
+			<file name="../vulkan/native/src/surface_win32.cpp" if="windows" />
+			<file name="../vulkan/native/src/window_win32.cpp" if="windows" />
+			<file name="../vulkan/native/src/surface_x11.cpp" if="linux" />
+			<file name="../vulkan/native/src/window_x11.cpp" if="linux" />
+			<file name="../vulkan/native/src/surface_android.cpp" if="android" />
+			<file name="../vulkan/native/src/window_android.cpp" if="android" />
 			<file name="../vulkan/native/src/image.cpp" />
 			<file name="../vulkan/native/src/batch.cpp" />
 			<file name="../vulkan/native/src/glsl.cpp" />
@@ -524,6 +531,11 @@
 
 				<lib name="-lpthread" />
 				<lib name="-lrt" />
+
+				<!-- X11 for the Vulkan platform layer. dlopen lives in libc since glibc
+				     2.34; -ldl keeps older distributions linking. -->
+				<lib name="-lX11" if="LIME_VULKAN" />
+				<lib name="-ldl" if="LIME_VULKAN" />
 
 				<lib name="-lgc" if="LIME_NEKO" />
 				<lib name="-lm" if="LIME_NEKO" />

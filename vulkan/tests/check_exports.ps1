@@ -48,6 +48,8 @@ if ($tooMany.Count -gt 0) {
 
 # The C entry points the tools and the pixel tests call directly.
 $expected += @('lime_vulkan_version', 'lime_vulkan_texture_create', 'lime_vulkan_batch_quads_d')
+# Android only, but defined on every platform so the ABI (and this check) stays one list.
+$expected += @('lime_vulkan_set_android_window')
 
 $bytes = [System.IO.File]::ReadAllBytes($Ndll)
 $text = [System.Text.Encoding]::Latin1.GetString($bytes)

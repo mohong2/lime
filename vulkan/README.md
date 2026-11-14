@@ -1,6 +1,10 @@
 # Vulkan renderer
 
-A Vulkan renderer for OpenFL and flixel on Windows x64, part of Lime.
+A Vulkan renderer for OpenFL and flixel, part of Lime. Windows x64 and Linux x64
+are complete (Win32 and X11 surfaces). Android carries the same library code, the
+`ANativeWindow` surface entry point and `lime_vulkan_set_android_window()` to hand
+the window over, but nothing calls that yet, so an Android session still falls
+back to OpenGL.
 
 The renderer takes over the drawing that OpenFL and flixel would normally send to
 OpenGL: quad batches become one Vulkan draw per batch, camera filters become a
@@ -18,7 +22,7 @@ and reports the reason instead of aborting.
 | Path | Contents |
 |---|---|
 | `native/include/lime_vulkan.h` | The public C API. |
-| `native/src/` | Implementation: loader, device, surface, images, batches, GLSL translation, programs. |
+| `native/src/` | Implementation: loader, device, images, batches, GLSL translation, programs, and the platform layer (`surface_*.cpp` / `window_*.cpp`). |
 | `native/src/haxe_api.cpp` | hxcpp primitives, the functions the Haxe side looks up at runtime. |
 | `native/shaders/` | Built-in shaders, compiled to `*_spirv.h` by the build. |
 | `native/shaderc/` | Command line shader compiler, used to validate GLSL offline. |
@@ -31,7 +35,9 @@ and reports the reason instead of aborting.
 
 ## Requirements
 
-* Windows x64 and MSVC 2019 or newer.
+* Windows x64 and MSVC 2019 or newer, or
+* Linux x64 with the X11 development headers, or
+* Android with the NDK (armv7 / arm64).
 * Python 3 on `PATH` (shader compilation).
 * Haxe 4.3 and hxcpp.
 
@@ -64,6 +70,18 @@ geometry, blend modes, texture formats and the shader toolchain.
 `tests/check_exports.ps1` verifies that `Lime.ndll` exports every primitive the
 Haxe side loads.
 
+The fork's CI runs on every push: it rebuilds `Lime.ndll` for Windows, Linux,
+macOS, Android and iOS, and on Windows it runs `tests/check_exports.ps1` against
+the fresh library, so a missing export fails the build rather than the game.
+The Windows, Linux and Android jobs compile the renderer; macOS and iOS build
+without it.
+
+Only the configuration the compiler runs on is covered by a normal build. The
+other halves can be syntax-checked anywhere: the Android NDK's clang compiles
+for `aarch64-linux-android` with the X11 headers stubbed out, and `-U__ANDROID__`
+turns the same run into the Linux configuration. CI is still the authoritative
+gate, because it compiles and links each platform for real.
+
 ## Integration
 
 1. Build the shared library once, as above.
@@ -72,6 +90,11 @@ Haxe side loads.
 3. Call `VkRuntime.start()` once the stage exists, install `VkStageRenderer`
    through `VkOverlay.install()`, and call `VkRuntime.endFrame()` from the window
    render callback.
+4. Android only: nothing there can find the game window, so hand it over with
+   `lime_vulkan_set_android_window()` — the pointer is the one SDL3 exposes as
+   `SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER` (or the Surface from the Java glue).
+   Call it again after the surface is re-created, and pass `NULL` when it goes
+   away: a stale `ANativeWindow` is worse than a fallback.
 
 ## Runtime flags
 
@@ -100,8 +123,16 @@ filters (shader, blur, colour matrix, convolution), custom per-sprite shaders,
 the OpenFL overlay (bitmap, text, graphics), and video frames that a mod feeds
 into a sprite.
 
+Platform layer: Win32 finds the largest visible window of the process, X11 walks
+the tree for the window whose `_NET_WM_PID` is this process, and both create and
+size the surface from it. Android cannot enumerate windows: the host passes the
+`ANativeWindow` to `lime_vulkan_set_android_window()`, and until it does the
+backend reports "unavailable" instead of guessing. Wayland is not covered (X11
+only).
+
 Not implemented yet: glow, drop shadow and displacement map filters; the
-triangle path; offscreen render textures; platforms other than Windows.
+triangle path; offscreen render textures; macOS and iOS (no Vulkan driver, and
+MoltenVK is not bundled).
 
 ## License
 

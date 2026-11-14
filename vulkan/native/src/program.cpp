@@ -595,8 +595,7 @@ namespace vulkan {
 
 		}
 
-		LARGE_INTEGER startCounter;
-		QueryPerformanceCounter (&startCounter);
+		double startSeconds = PerfNow ();
 
 		ShaderProgram* program = new ShaderProgram ();
 
@@ -726,12 +725,7 @@ namespace vulkan {
 		program->handle = handle;
 		state.programs[handle] = program;
 
-		LARGE_INTEGER frequency;
-		LARGE_INTEGER end;
-		QueryPerformanceFrequency (&frequency);
-		QueryPerformanceCounter (&end);
-
-		double milliseconds = (double)(end.QuadPart - startCounter.QuadPart) * 1000.0 / (double)frequency.QuadPart;
+		double milliseconds = (PerfNow () - startSeconds) * 1000.0;
 
 		Log ("program %llu: %u byte uniform block, %u sampler(s), %s, %.1f ms (backend=%s)",
 			(unsigned long long)handle, program->uniformSize, (unsigned)program->samplers.size(),

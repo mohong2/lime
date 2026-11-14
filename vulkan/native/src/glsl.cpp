@@ -191,7 +191,7 @@ namespace glsl {
 
 			size_t wordEnd = position;
 
-			while (wordEnd > 0 && (source[wordEnd - 1] == ' ' || source[wordEnd - 1] == '	' || source[wordEnd - 1] == '')) --wordEnd;
+			while (wordEnd > 0 && (source[wordEnd - 1] == ' ' || source[wordEnd - 1] == '\t' || source[wordEnd - 1] == '\r' || source[wordEnd - 1] == '\n')) --wordEnd;
 
 			for (int qualifier = 0; qualifier < 2; ++qualifier) {
 
@@ -210,7 +210,7 @@ namespace glsl {
 
 				wordEnd = wordStart;
 
-				while (wordEnd > 0 && (source[wordEnd - 1] == ' ' || source[wordEnd - 1] == '	' || source[wordEnd - 1] == '')) --wordEnd;
+				while (wordEnd > 0 && (source[wordEnd - 1] == ' ' || source[wordEnd - 1] == '\t' || source[wordEnd - 1] == '\r' || source[wordEnd - 1] == '\n')) --wordEnd;
 
 			}
 

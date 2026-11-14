@@ -231,18 +231,4 @@ namespace vulkan {
 
 }
 
-#else
-
-// Other platforms start empty: X11 and Android discovery come later.
-namespace vulkan {
-
-	unsigned int FindProcessIdByName (const char* exeName) { return 0; }
-	void* FindProcessWindow (unsigned int pid) { return NULL; }
-	bool WindowClientSize (void* window, int* width, int* height) { return false; }
-	int WindowTitle (void* window, char* out, int capacity) { return 0; }
-	int SuspendProcess (unsigned int pid) { return 0; }
-	int ResumeProcess (unsigned int pid) { return 0; }
-
-}
-
 #endif
