@@ -30,6 +30,12 @@ EXPECTED = [
     ("subtract-red", 2, (0, GREY, GREY), 4),
     # darken with black: min(0, GREY) everywhere
     ("darken-black", 3, (0, 0, 0), 4),
+    # a white colour offset on a fully transparent texture must leave the clear
+    # colour alone: the offset is additive, and adding it to a premultiplied
+    # texel that has no alpha turned every tinted sprite into a solid block
+    ("offset-transparent", 4, (GREY, GREY, GREY), 4),
+    # the same offset on an opaque white texel still has to subtract fully
+    ("offset-black", 5, (0, 0, 0), 4),
 ]
 
 
@@ -59,7 +65,7 @@ def main(argv: list[str]) -> int:
     height = int(info["clientHeight"])
 
     client = image.crop((left, top, left + width, top + height))
-    band = height // 4
+    band = height // 6
 
     failures = 0
     print(f"client area {width}x{height} (from {path.name})")

@@ -24,12 +24,19 @@ layout(set = 0, binding = 0) uniform sampler2D uTexture;
 void main() {
 
 	vec4 texel = texture (uTexture, vTexCoord);
-	vec4 result;
 
 	// Same order as OpenFL's color transform: multiply, then add, then clamp.
 	// vColorOffset is zero for everything that has no colorTransform.
-	result.rgb = clamp (texel.rgb * vColor.rgb + vColorOffset.rgb, 0.0, 1.0) * vColor.a;
+	//
+	// The offset is scaled by the final alpha because the texture is premultiplied
+	// and the offset is not: adding it unscaled leaves a fully transparent texel
+	// with the offset colour and a zero alpha, and the premultiplied blend adds
+	// that rgb anyway. That is how a colour transform turns a whole sprite into a
+	// solid block (WBG.lua: characters tinted to white on a white background).
+	vec4 result;
+
 	result.a = clamp (texel.a * vColor.a + vColorOffset.a, 0.0, 1.0);
+	result.rgb = clamp (texel.rgb * vColor.rgb + vColorOffset.rgb * result.a, 0.0, 1.0) * vColor.a;
 
 	oColor = result;
 

@@ -388,11 +388,21 @@ static void DrawSprite (int index, float time, int screenWidth, int screenHeight
  *   band 2  subtract red    on grey 128 -> (  0, 128, 128)   dst - src, clamped
  *   band 3  darken   black  on grey 128 -> (  0,   0,   0)
  */
+/** 1x1 texture with nothing in it, for the colour offset band. */
+static lime_vulkan_texture_handle g_emptyTexture = 0;
+
 static bool DrawBlendScene () {
 
 	int screenWidth = g_width;
 	int screenHeight = g_height;
-	int band = screenHeight / 4;
+	int band = screenHeight / 6;
+
+	if (g_emptyTexture == 0) {
+
+		const unsigned char empty[4] = { 0, 0, 0, 0 };
+		g_emptyTexture = lime_vulkan_texture_create (empty, 1, 1, LIME_VULKAN_TEXTURE_NEAREST);
+
+	}
 
 	const float grey[4] = { 0.5f, 0.5f, 0.5f, 1.0f };
 
@@ -412,6 +422,46 @@ static bool DrawBlendScene () {
 
 	lime_vulkan_batch_set_blend (LIME_VULKAN_BLEND_DARKEN);
 	lime_vulkan_batch_quad (0.0f, (float)(band * 3), (float)screenWidth, (float)band, 0.0f, 0.0f, 1.0f, 1.0f, 0xFF000000u);
+
+	// Colour offsets (colorTransform.redOffset and friends) are additive, and the
+	// texture is premultiplied: an offset added without scaling by alpha turns a
+	// fully transparent texel into a solid block of the offset colour. Bands 4 and
+	// 5 cover both halves of that rule.
+	lime_vulkan_batch_set_blend (LIME_VULKAN_BLEND_NORMAL);
+
+	const double rect[4] = { 0.0, 0.0, 1.0, 1.0 };
+	double matrix[6] = { (double)screenWidth, 0.0, 0.0, (double)band, 0.0, (double)(band * 4) };
+	double multipliers[16];
+	double offsets[16];
+
+	for (int i = 0; i < 4; ++i) {
+
+		multipliers[i * 4 + 0] = 1.0;
+		multipliers[i * 4 + 1] = 1.0;
+		multipliers[i * 4 + 2] = 1.0;
+		multipliers[i * 4 + 3] = 1.0;
+		offsets[i * 4 + 0] = 255.0;
+		offsets[i * 4 + 1] = 255.0;
+		offsets[i * 4 + 2] = 255.0;
+		offsets[i * 4 + 3] = 0.0;
+
+	}
+
+	lime_vulkan_batch_set_texture (g_emptyTexture);
+	lime_vulkan_batch_quads_d (rect, matrix, 1, NULL, 1.0f, multipliers, offsets);
+
+	// The same offset on an opaque texel has to apply: white minus 255 is black.
+	for (int i = 0; i < 4; ++i) {
+
+		offsets[i * 4 + 0] = -255.0;
+		offsets[i * 4 + 1] = -255.0;
+		offsets[i * 4 + 2] = -255.0;
+
+	}
+
+	matrix[5] = (double)(band * 5);
+	lime_vulkan_batch_set_texture (0);
+	lime_vulkan_batch_quads_d (rect, matrix, 1, NULL, 1.0f, multipliers, offsets);
 
 	return lime_vulkan_batch_end () != 0;
 
