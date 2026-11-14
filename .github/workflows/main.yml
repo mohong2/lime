@@ -64,6 +64,7 @@ jobs:
         run: haxelib run lime --version
 
       - name: Rebuild Lime Linux ndll (SDL3)
+        timeout-minutes: 40
         run: haxelib run lime rebuild linux -64 -release -nocolor -verbose -nocffi -Dlime-sdl3 -DLIME_VULKAN
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -111,6 +112,7 @@ jobs:
       # LIME_VULKAN 在 project/Build.xml 里对 Windows 默认开启 (见 55d4ac4), 这里再显式
       # 传一次: 以后谁把默认值改动/换成分支判断, CI 也不会静默产出一个不含渲染器的 ndll。
       - name: Rebuild Lime Windows ndll (SDL3, with the Vulkan renderer)
+        timeout-minutes: 40
         run: haxelib run lime rebuild windows -64 -release -nocolor -verbose -nocffi -Dlime-sdl3 -DLIME_VULKAN
 
       - name: Verify the Vulkan renderer is inside Lime.ndll
@@ -163,6 +165,7 @@ jobs:
         run: haxelib run lime --version
 
       - name: Rebuild Lime macOS ndll (SDL3)
+        timeout-minutes: 40
         run: haxelib run lime rebuild mac -64 -release -nocolor -verbose -nocffi -Dlime-sdl3
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -226,6 +229,7 @@ jobs:
           haxelib run lime config
 
       - name: Rebuild Lime Android ndll (SDL3)
+        timeout-minutes: 40
         run: haxelib run lime rebuild android -release -nocolor -verbose -nocffi -Dlime-sdl3 -DLIME_VULKAN
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -278,6 +282,7 @@ jobs:
       # 这里仍显式传一次 -Dlime-sdl3: 和 Windows/Linux/Android 三个 job 保持一致,
       # 以后谁把默认值改回去, CI 也不会静默产出一个 SDL2 版 ndll。
       - name: Rebuild Lime iOS ndll (SDL3)
+        timeout-minutes: 60
         run: haxelib run lime rebuild ios -arm64 -release -nocolor -verbose -nocffi -Dlime-sdl3
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
