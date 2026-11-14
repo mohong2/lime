@@ -60,8 +60,12 @@ jobs:
       - name: Rebuild Lime tools
         run: haxelib run lime rebuild tools -nocolor -verbose -nocffi
 
+      # -nocffi 不能省: 在 Windows 上 hxp.Log 给终端上色时会 CFFI.load("lime") 去加载
+      # lime.ndll, 而 rebuild 类命令会自动关掉 CFFI (CommandLineTools 看到 "rebuild"
+      # 就 CFFI.enabled = false), --version 不会 —— 于是它成了唯一一个会要 ndll 的命令,
+      # 没编宿主库时报 "Failed to load library : lime.ndll".
       - name: Verify Lime tools
-        run: haxelib run lime --version
+        run: haxelib run lime --version -nocffi
 
       - name: Rebuild Lime Linux ndll (SDL3)
         timeout-minutes: 40
@@ -106,8 +110,12 @@ jobs:
       - name: Rebuild Lime tools
         run: haxelib run lime rebuild tools -nocolor -verbose -nocffi
 
+      # -nocffi 不能省: 在 Windows 上 hxp.Log 给终端上色时会 CFFI.load("lime") 去加载
+      # lime.ndll, 而 rebuild 类命令会自动关掉 CFFI (CommandLineTools 看到 "rebuild"
+      # 就 CFFI.enabled = false), --version 不会 —— 于是它成了唯一一个会要 ndll 的命令,
+      # 没编宿主库时报 "Failed to load library : lime.ndll".
       - name: Verify Lime tools
-        run: haxelib run lime --version
+        run: haxelib run lime --version -nocffi
 
       # LIME_VULKAN 在 project/Build.xml 里对 Windows 默认开启 (见 55d4ac4), 这里再显式
       # 传一次: 以后谁把默认值改动/换成分支判断, CI 也不会静默产出一个不含渲染器的 ndll。
@@ -161,8 +169,12 @@ jobs:
       - name: Rebuild Lime tools
         run: haxelib run lime rebuild tools -nocolor -verbose -nocffi
 
+      # -nocffi 不能省: 在 Windows 上 hxp.Log 给终端上色时会 CFFI.load("lime") 去加载
+      # lime.ndll, 而 rebuild 类命令会自动关掉 CFFI (CommandLineTools 看到 "rebuild"
+      # 就 CFFI.enabled = false), --version 不会 —— 于是它成了唯一一个会要 ndll 的命令,
+      # 没编宿主库时报 "Failed to load library : lime.ndll".
       - name: Verify Lime tools
-        run: haxelib run lime --version
+        run: haxelib run lime --version -nocffi
 
       - name: Rebuild Lime macOS ndll (SDL3)
         timeout-minutes: 40
@@ -217,8 +229,12 @@ jobs:
       - name: Rebuild Lime tools
         run: haxelib run lime rebuild tools -nocolor -verbose -nocffi
 
+      # -nocffi 不能省: 在 Windows 上 hxp.Log 给终端上色时会 CFFI.load("lime") 去加载
+      # lime.ndll, 而 rebuild 类命令会自动关掉 CFFI (CommandLineTools 看到 "rebuild"
+      # 就 CFFI.enabled = false), --version 不会 —— 于是它成了唯一一个会要 ndll 的命令,
+      # 没编宿主库时报 "Failed to load library : lime.ndll".
       - name: Verify Lime tools
-        run: haxelib run lime --version
+        run: haxelib run lime --version -nocffi
 
       - name: Configure Android
         run: |
@@ -275,8 +291,12 @@ jobs:
       - name: Rebuild Lime tools
         run: haxelib run lime rebuild tools -nocolor -verbose -nocffi
 
+      # -nocffi 不能省: 在 Windows 上 hxp.Log 给终端上色时会 CFFI.load("lime") 去加载
+      # lime.ndll, 而 rebuild 类命令会自动关掉 CFFI (CommandLineTools 看到 "rebuild"
+      # 就 CFFI.enabled = false), --version 不会 —— 于是它成了唯一一个会要 ndll 的命令,
+      # 没编宿主库时报 "Failed to load library : lime.ndll".
       - name: Verify Lime tools
-        run: haxelib run lime --version
+        run: haxelib run lime --version -nocffi
 
       # iOS/tvOS 自 d24dafd (apple SDL3) 起在 project/Build.xml 里默认走 SDL3 后端,
       # 这里仍显式传一次 -Dlime-sdl3: 和 Windows/Linux/Android 三个 job 保持一致,

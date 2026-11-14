@@ -76,6 +76,18 @@
 
 		<compilerflag value="-Iinclude" />
 
+		<!-- hxcpp's clang android toolchain points its target at
+		     arm-linux-androideabi16 for the HXCPP_ARMV7 ABI without a -march flag (its
+		     gcc toolchain does pass one), so clang defaults to armv5te. __ARM_ARCH is
+		     then 5 and the Khronos headers refuse to compile at all:
+		         "Vulkan is not supported for the 'armeabi' NDK ABI"
+		     The library is shipped as armeabi-v7a anyway, so ask for that target. -->
+		<section if="android">
+			<section if="HXCPP_ARMV7">
+				<compilerflag value="-march=armv7-a" />
+			</section>
+		</section>
+
 		<file name="src/ExternalInterface.cpp" />
 
 		<section if="LIME_CAIRO">
