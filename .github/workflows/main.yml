@@ -45,6 +45,11 @@ jobs:
       - name: Install Haxe deps
         run: |
           haxelib install hxcpp --quiet
+          # lime 的 run.n 在 tools 源码比自身新时会现场重编 tools, 这一步需要 format 和
+          # hxp, 缺一个就报 "Cannot process [format]: Library format is not installed"
+          # (旧 CI 装过这两个, SDL3 迁移时被当成"不用 rebuild tools"一起删掉了)。
+          haxelib install format --quiet
+          haxelib install hxp --quiet
           haxelib dev lime $GITHUB_WORKSPACE
 
       - name: Verify Lime tools
@@ -77,6 +82,11 @@ jobs:
       - name: Install Haxe deps
         run: |
           haxelib install hxcpp --quiet
+          # lime 的 run.n 在 tools 源码比自身新时会现场重编 tools, 这一步需要 format 和
+          # hxp, 缺一个就报 "Cannot process [format]: Library format is not installed"
+          # (旧 CI 装过这两个, SDL3 迁移时被当成"不用 rebuild tools"一起删掉了)。
+          haxelib install format --quiet
+          haxelib install hxp --quiet
           haxelib dev lime $Env:GITHUB_WORKSPACE
 
       - name: Verify Lime tools
@@ -98,8 +108,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # macos-13 已于 2025-12-04 从托管 runner 下线, 现在会被永久挂在 "Waiting for a
+  # runner to pick up this job" 而不是报错。Intel 镜像的现行标签是 macos-15-intel
+  # (最后一个 x86_64 镜像, 官方支持到 2027-08), 和引擎侧 CI 用的是同一个。
   macos-ndll:
-    runs-on: macos-13
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -115,6 +128,11 @@ jobs:
       - name: Install Haxe deps
         run: |
           haxelib install hxcpp --quiet
+          # lime 的 run.n 在 tools 源码比自身新时会现场重编 tools, 这一步需要 format 和
+          # hxp, 缺一个就报 "Cannot process [format]: Library format is not installed"
+          # (旧 CI 装过这两个, SDL3 迁移时被当成"不用 rebuild tools"一起删掉了)。
+          haxelib install format --quiet
+          haxelib install hxp --quiet
           haxelib dev lime $GITHUB_WORKSPACE
 
       - name: Verify Lime tools
@@ -157,6 +175,11 @@ jobs:
       - name: Install Haxe deps
         run: |
           haxelib install hxcpp --quiet
+          # lime 的 run.n 在 tools 源码比自身新时会现场重编 tools, 这一步需要 format 和
+          # hxp, 缺一个就报 "Cannot process [format]: Library format is not installed"
+          # (旧 CI 装过这两个, SDL3 迁移时被当成"不用 rebuild tools"一起删掉了)。
+          haxelib install format --quiet
+          haxelib install hxp --quiet
           haxelib dev lime $GITHUB_WORKSPACE
 
       - name: Verify Lime tools
@@ -185,7 +208,7 @@ jobs:
   # 命令时要先加载 ndll/Mac64/lime.ndll; 6a17784 把 run.n 改成 -nocffi 之后这条
   # 依赖就消失了 (见上面 setup-haxe 一步的注释)。
   ios-ndll:
-    runs-on: macos-13
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -201,6 +224,11 @@ jobs:
       - name: Install Haxe deps
         run: |
           haxelib install hxcpp --quiet
+          # lime 的 run.n 在 tools 源码比自身新时会现场重编 tools, 这一步需要 format 和
+          # hxp, 缺一个就报 "Cannot process [format]: Library format is not installed"
+          # (旧 CI 装过这两个, SDL3 迁移时被当成"不用 rebuild tools"一起删掉了)。
+          haxelib install format --quiet
+          haxelib install hxp --quiet
           haxelib dev lime $GITHUB_WORKSPACE
 
       - name: Verify Lime tools
