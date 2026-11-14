@@ -96,8 +96,8 @@ class VkExtern
 			_batchStatsText = load ("lime_vulkan_batch_stats_text_hx", 0);
 			_selfWindow = load ("lime_vulkan_self_window_hx", 0);
 			_windowClientSize = load ("lime_vulkan_window_client_size_hx", 3);
-			_probeWindowFlat = load ("lime_vulkan_probe_window_flat_hx", 8);
-			_contextCreateFlat = load ("lime_vulkan_context_create_flat_hx", 8);
+			_probeWindowFlat = load ("lime_vulkan_probe_window_flat_hx", 4);
+			_contextCreateFlat = load ("lime_vulkan_context_create_flat_hx", 4);
 			_contextDestroy = load ("lime_vulkan_context_destroy_hx", 0);
 			_contextAttached = load ("lime_vulkan_context_attached_hx", 0);
 			_releaseGL = load ("lime_vulkan_release_gl_hx", 0);
@@ -118,8 +118,8 @@ class VkExtern
 			_batchSetBlend = load ("lime_vulkan_batch_set_blend_hx", 1);
 			_batchSetScissor = load ("lime_vulkan_batch_set_scissor_hx", 4);
 			_batchSetView = load ("lime_vulkan_batch_set_view_hx", 1);
-			_batchQuad = load ("lime_vulkan_batch_quad_hx", 9);
-			_batchQuadsD = load ("lime_vulkan_batch_quads_d_hx", 7);
+			_batchQuad = load ("lime_vulkan_batch_quad_hx", 2);
+			_batchQuadsD = load ("lime_vulkan_batch_quads_d_hx", 5);
 			_batchSetProgram = load ("lime_vulkan_batch_set_program_hx", 1);
 
 			_targetCreate = load ("lime_vulkan_target_create_hx", 2);
@@ -148,9 +148,77 @@ class VkExtern
 		catch (error:Dynamic)
 		{
 			_bound = false;
+			return _bound;
+		}
+
+		// A primitive that did not resolve must never turn into a null call later on:
+		// hxcpp reports that as "Null Function Pointer" from inside an unrelated Haxe
+		// frame, which is impossible to read. Naming the missing entry points here turns
+		// it into the ordinary "this build has no renderer" dialog with a reason.
+		var missing:Array<String> = [];
+
+		require (missing, "version", _version);
+		require (missing, "available", _available);
+		require (missing, "probe_text", _probeText);
+		require (missing, "status_text", _statusText);
+		require (missing, "batch_stats_text", _batchStatsText);
+		require (missing, "self_window", _selfWindow);
+		require (missing, "window_client_size", _windowClientSize);
+		require (missing, "probe_window_flat", _probeWindowFlat);
+		require (missing, "context_create_flat", _contextCreateFlat);
+		require (missing, "context_destroy", _contextDestroy);
+		require (missing, "context_attached", _contextAttached);
+		require (missing, "release_gl", _releaseGL);
+		require (missing, "resize", _resize);
+		require (missing, "notify_fallback", _notifyFallback);
+		require (missing, "set_dialog_enabled", _setDialogEnabled);
+		require (missing, "texture_create", _textureCreate);
+		require (missing, "texture_update", _textureUpdate);
+		require (missing, "texture_destroy", _textureDestroy);
+		require (missing, "texture_retire", _textureRetire);
+		require (missing, "texture_size", _textureSize);
+		require (missing, "batch_begin_rgba", _batchBeginRgba);
+		require (missing, "batch_end", _batchEnd);
+		require (missing, "batch_set_texture", _batchSetTexture);
+		require (missing, "batch_set_filter", _batchSetFilter);
+		require (missing, "batch_set_blend", _batchSetBlend);
+		require (missing, "batch_set_scissor", _batchSetScissor);
+		require (missing, "batch_set_view", _batchSetView);
+		require (missing, "batch_quad", _batchQuad);
+		require (missing, "batch_quads_d", _batchQuadsD);
+		require (missing, "batch_set_program", _batchSetProgram);
+		require (missing, "target_create", _targetCreate);
+		require (missing, "target_valid", _targetValid);
+		require (missing, "batch_begin_target", _batchBeginTarget);
+		require (missing, "batch_end_target", _batchEndTarget);
+		require (missing, "program_create_flat", _programCreateFlat);
+		require (missing, "program_destroy", _programDestroy);
+		require (missing, "program_valid", _programValid);
+		require (missing, "program_log", _programLog);
+		require (missing, "program_uniform_count", _programUniformCount);
+		require (missing, "program_uniform_name", _programUniformName);
+		require (missing, "program_uniform_type", _programUniformType);
+		require (missing, "program_uniform_offset", _programUniformOffset);
+		require (missing, "program_uniform_size", _programUniformSize);
+		require (missing, "program_uniform_length", _programUniformLength);
+		require (missing, "program_sampler_count", _programSamplerCount);
+		require (missing, "program_sampler_name", _programSamplerName);
+		require (missing, "program_set_sampler_texture", _programSetSamplerTexture);
+		require (missing, "program_write_floats", _programWriteFloats);
+		require (missing, "program_write_ints", _programWriteInts);
+
+		if (missing.length > 0)
+		{
+			_bound = false;
+			Sys.println ("[vulkan] Lime.ndll is missing " + missing.length + " renderer primitive(s): " + missing.join (", "));
 		}
 
 		return _bound;
+	}
+
+	static function require(missing:Array<String>, name:String, value:Dynamic):Void
+	{
+		if (value == null) missing.push (name);
 	}
 
 	static function load(name:String, args:Int):Dynamic
@@ -246,13 +314,31 @@ class VkExtern
 		return _windowClientSize (ptr (target), ptr (width), ptr (height));
 	}
 
+	/**
+	 * Packs the option bits the native side unpacks.
+	 *
+	 * hxcpp resolves a primitive only when it has at most five arguments: anything
+	 * above that is looked up as name__MULT and never found (see __loadprim in
+	 * hxcpp's hx/Lib.cpp). Five separate option arguments would therefore never
+	 * bind, so they travel as one integer.
+	 */
+	static inline function packOptions(deviceIndex:Int, presentMode:Int,
+		enableValidation:Int, verbose:Int, fallbackDialog:Int):Int
+	{
+		return ((deviceIndex + 1) & 0x1FF)
+			| ((presentMode & 0x7) << 9)
+			| ((enableValidation & 0x1) << 12)
+			| ((verbose & 0x1) << 13)
+			| ((fallbackDialog & 0x1) << 14);
+	}
+
 	public static function probeWindowFlat(target:Pointer<cpp.Void>, width:Int, height:Int,
 		deviceIndex:Int, presentMode:Int, enableValidation:Int, verbose:Int, fallbackDialog:Int):Int
 	{
 		if (!bind ()) return 0;
 
-		return _probeWindowFlat (ptr (target), width, height, deviceIndex, presentMode,
-			enableValidation, verbose, fallbackDialog);
+		return _probeWindowFlat (ptr (target), width, height,
+			packOptions (deviceIndex, presentMode, enableValidation, verbose, fallbackDialog));
 	}
 
 	public static function contextCreateFlat(target:Pointer<cpp.Void>, width:Int, height:Int,
@@ -260,8 +346,8 @@ class VkExtern
 	{
 		if (!bind ()) return 0;
 
-		return _contextCreateFlat (ptr (target), width, height, deviceIndex, presentMode,
-			enableValidation, verbose, fallbackDialog);
+		return _contextCreateFlat (ptr (target), width, height,
+			packOptions (deviceIndex, presentMode, enableValidation, verbose, fallbackDialog));
 	}
 
 	public static function contextDestroy():Void
@@ -378,13 +464,28 @@ class VkExtern
 		if (bind ()) _batchSetView (nullPointer ());
 	}
 
+	/** Reused per call: a primitive cannot carry nine arguments, so it reads eight numbers. */
+	static var quadValues:Array<Float> = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+
 	public static function batchQuad(x:Float, y:Float, width:Float, height:Float,
 		u0:Float, v0:Float, u1:Float, v1:Float, color:UInt32):Int
 	{
 		if (!bind ()) return 0;
 
-		return _batchQuad (x, y, width, height, u0, v0, u1, v1, signed (color));
+		quadValues[0] = x;
+		quadValues[1] = y;
+		quadValues[2] = width;
+		quadValues[3] = height;
+		quadValues[4] = u0;
+		quadValues[5] = v0;
+		quadValues[6] = u1;
+		quadValues[7] = v1;
+
+		return _batchQuad (ptr (cpp.NativeArray.address (quadValues, 0)), signed (color));
 	}
+
+	/** [uniformAlpha, colorMultipliers pointer, colorOffsets pointer] for batchQuadsD. */
+	static var batchExtras:Array<Float> = [0.0, 0.0, 0.0];
 
 	public static function batchQuadsD(rects:Pointer<Float>, transforms:Pointer<Float>, quadCount:Int,
 		alphas:Pointer<Float>, uniformAlpha:Float32,
@@ -392,8 +493,12 @@ class VkExtern
 	{
 		if (!bind ()) return 0;
 
-		return _batchQuadsD (ptr (rects), ptr (transforms), quadCount, ptr (alphas), uniformAlpha,
-			ptr (colorMultipliers), ptr (colorOffsets));
+		batchExtras[0] = (uniformAlpha : Float);
+		batchExtras[1] = (ptr (colorMultipliers) : Float);
+		batchExtras[2] = (ptr (colorOffsets) : Float);
+
+		return _batchQuadsD (ptr (rects), ptr (transforms), quadCount, ptr (alphas),
+			ptr (cpp.NativeArray.address (batchExtras, 0)));
 	}
 
 	public static function batchSetProgram(program:UInt64):Void

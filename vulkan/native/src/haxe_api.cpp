@@ -97,25 +97,49 @@ static value lime_vulkan_window_client_size_hx (value window, value width, value
 
 DEFINE_PRIM (lime_vulkan_window_client_size_hx, 3);
 
-static value lime_vulkan_context_create_flat_hx (value window, value width, value height,
-	value deviceIndex, value presentMode, value validation, value verbose, value fallbackDialog)
+// hxcpp's cpp.Lib.load only resolves primitives with up to five arguments: anything
+// above that is looked up as name__MULT and never found (see __loadprim in hxcpp's
+// hx/Lib.cpp). So the option bits travel packed into one integer instead of as five
+// separate arguments, and the wrapper stays at four.
+//
+//   bits  0..8   deviceIndex + 1   (0 means "pick one")
+//   bits  9..11  presentMode        (0 auto, 3 vsync)
+//   bit   12     enableValidation
+//   bit   13     verbose
+//   bit   14     fallbackDialog
+static lime_vulkan_options UnpackOptions (int packed)
 {
-	return alloc_int (lime_vulkan_context_create_flat (AsPointer (val_number (window)),
-		val_int (width), val_int (height), val_int (deviceIndex), val_int (presentMode),
-		val_int (validation), val_int (verbose), val_int (fallbackDialog)));
+	lime_vulkan_options options;
+	lime_vulkan_default_options (&options);
+
+	options.deviceIndex = ((packed & 0x1FF) - 1);
+	options.presentMode = (packed >> 9) & 0x7;
+	options.enableValidation = (packed >> 12) & 0x1;
+	options.verbose = (packed >> 13) & 0x1;
+	options.fallbackDialog = (packed >> 14) & 0x1;
+
+	return options;
 }
 
-DEFINE_PRIM (lime_vulkan_context_create_flat_hx, 8);
-
-static value lime_vulkan_probe_window_flat_hx (value window, value width, value height,
-	value deviceIndex, value presentMode, value validation, value verbose, value fallbackDialog)
+static value lime_vulkan_context_create_flat_hx (value window, value width, value height, value packed)
 {
-	return alloc_int (lime_vulkan_probe_window_flat (AsPointer (val_number (window)),
-		val_int (width), val_int (height), val_int (deviceIndex), val_int (presentMode),
-		val_int (validation), val_int (verbose), val_int (fallbackDialog)));
+	lime_vulkan_options options = UnpackOptions (val_int (packed));
+
+	return alloc_int (lime_vulkan_context_create (AsPointer (val_number (window)),
+		val_int (width), val_int (height), &options));
 }
 
-DEFINE_PRIM (lime_vulkan_probe_window_flat_hx, 8);
+DEFINE_PRIM (lime_vulkan_context_create_flat_hx, 4);
+
+static value lime_vulkan_probe_window_flat_hx (value window, value width, value height, value packed)
+{
+	lime_vulkan_options options = UnpackOptions (val_int (packed));
+
+	return alloc_int (lime_vulkan_probe_window (AsPointer (val_number (window)),
+		val_int (width), val_int (height), &options));
+}
+
+DEFINE_PRIM (lime_vulkan_probe_window_flat_hx, 4);
 
 static value lime_vulkan_context_destroy_hx ()
 {
@@ -264,26 +288,38 @@ static value lime_vulkan_batch_set_view_hx (value matrix)
 
 DEFINE_PRIM (lime_vulkan_batch_set_view_hx, 1);
 
-static value lime_vulkan_batch_quad_hx (value x, value y, value width, value height,
-	value u0, value v0, value u1, value v1, value color)
+// Same five argument limit: the geometry goes in as one pointer to eight floats
+// (x, y, width, height, u0, v0, u1, v1) instead of eight boxed arguments.
+static value lime_vulkan_batch_quad_hx (value values, value color)
 {
-	return alloc_int (lime_vulkan_batch_quad ((float)val_number (x), (float)val_number (y),
-		(float)val_number (width), (float)val_number (height), (float)val_number (u0), (float)val_number (v0),
-		(float)val_number (u1), (float)val_number (v1), (unsigned int)val_int (color)));
+	// A Haxe Array<Float> is an array of doubles on this target, not of floats.
+	const double* v = (const double*)(intptr_t)val_number (values);
+
+	if (!v) return alloc_int (0);
+
+	return alloc_int (lime_vulkan_batch_quad ((float)v[0], (float)v[1], (float)v[2], (float)v[3],
+		(float)v[4], (float)v[5], (float)v[6], (float)v[7], (unsigned int)val_int (color)));
 }
 
-DEFINE_PRIM (lime_vulkan_batch_quad_hx, 9);
+DEFINE_PRIM (lime_vulkan_batch_quad_hx, 2);
 
+// Same five argument limit: 'extras' points at three doubles
+//   [0] uniformAlpha   [1] colorMultipliers pointer   [2] colorOffsets pointer
+// so the hot path stays one call with a single extra load.
 static value lime_vulkan_batch_quads_d_hx (value rects, value transforms, value quadCount,
-	value alphas, value uniformAlpha, value colorMultipliers, value colorOffsets)
+	value alphas, value extras)
 {
+	const double* extra = (const double*)(intptr_t)val_number (extras);
+
+	if (!extra) return alloc_int (0);
+
 	return alloc_int (lime_vulkan_batch_quads_d ((const double*)(intptr_t)val_number (rects),
 		(const double*)(intptr_t)val_number (transforms), val_int (quadCount),
-		(const double*)(intptr_t)val_number (alphas), (float)val_number (uniformAlpha),
-		(const double*)(intptr_t)val_number (colorMultipliers), (const double*)(intptr_t)val_number (colorOffsets)));
+		(const double*)(intptr_t)val_number (alphas), (float)extra[0],
+		(const double*)(intptr_t)extra[1], (const double*)(intptr_t)extra[2]));
 }
 
-DEFINE_PRIM (lime_vulkan_batch_quads_d_hx, 7);
+DEFINE_PRIM (lime_vulkan_batch_quads_d_hx, 5);
 
 static value lime_vulkan_batch_set_program_hx (value program)
 {

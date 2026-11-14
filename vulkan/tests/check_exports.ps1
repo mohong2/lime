@@ -29,6 +29,23 @@ if ($expected.Count -lt 40) {
     throw "only $($expected.Count) primitives found in VkExtern.hx, the pattern probably changed"
 }
 
+# hxcpp resolves a primitive with at most five arguments: __loadprim appends "__MULT"
+# for anything above that and the lookup then fails at runtime, with the error only
+# showing up as a null call inside the game. Fail the build check instead.
+$tooMany = @(
+    foreach ($match in [regex]::Matches($binding, 'load ("([a-z0-9_]+)", (d+))')) {
+        if ([int]$match.Groups[2].Value -gt 5) {
+            '{0} takes {1} arguments' -f $match.Groups[1].Value, $match.Groups[2].Value
+        }
+    }
+)
+
+if ($tooMany.Count -gt 0) {
+    Write-Host 'primitives over the hxcpp limit:'
+    $tooMany | ForEach-Object { Write-Host "  $_" }
+    throw "$($tooMany.Count) primitive(s) take more than five arguments and can never bind"
+}
+
 # The C entry points the tools and the pixel tests call directly.
 $expected += @('lime_vulkan_version', 'lime_vulkan_texture_create', 'lime_vulkan_batch_quads_d')
 
