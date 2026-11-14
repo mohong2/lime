@@ -169,6 +169,163 @@ enum {
 
 static int g_layout = LAYOUT_SPIRAL;
 
+// ---------------------------------------------------------------------------
+// Baseline scenes for the perf harness
+//
+// 'empty' only clears, 'sprites' pushes ten thousand quads through one batch, and
+// 'cameras' mirrors what a game frame actually costs: three camera layers, each
+// drawn offscreen and blurred with two extra passes before they are composited.
+// The three together are what PERF.md tracks, so a change is always measured
+// against the same shapes rather than against a screenshot that "feels slower".
+// ---------------------------------------------------------------------------
+
+static bool g_camerasScene = false;
+static bool g_texAllocScene = false;
+static int g_texAllocCount = 1000;
+static int g_texAllocSize = 512;
+static lime_vulkan_texture_handle* g_texAllocHandles = 0;
+static int g_cameraSprites = 1500;
+static bool g_perfOutput = false;
+static const char* g_sceneName = "empty";
+
+static lime_vulkan_texture_handle g_cameraTargets[3] = { 0, 0, 0 };
+static lime_vulkan_texture_handle g_blurScratch[3] = { 0, 0, 0 };
+static lime_vulkan_program g_blurProgram = 0;
+
+// The vertex shader every OpenFL sprite program uses. Kept inline so the scene
+// needs no extra file next to the executable.
+static const char* kCameraVertex =
+	"#pragma header\n"
+	"attribute float alpha;\n"
+	"attribute vec4 colorMultiplier;\n"
+	"attribute vec4 colorOffset;\n"
+	"uniform bool hasColorTransform;\n"
+	"void main(void) {\n"
+	"\t#pragma body\n"
+	"\topenfl_Alphav = openfl_Alpha * alpha;\n"
+	"\tif (hasColorTransform) {\n"
+	"\t\topenfl_ColorOffsetv = colorOffset / 255.0;\n"
+	"\t\topenfl_ColorMultiplierv = colorMultiplier;\n"
+	"\t}\n"
+	"}\n";
+
+// Five taps through linear filtering, nine samples: a real blur, not a box.
+static const char* kBlurFragment =
+	"#pragma header\n"
+	"uniform vec2 uDir;\n"
+	"void main(void) {\n"
+	"\tvec2 uv = openfl_TextureCoordv;\n"
+	"\tvec4 sum = texture2D(bitmap, uv) * 0.227027;\n"
+	"\tsum += (texture2D(bitmap, uv + uDir * 1.384615) + texture2D(bitmap, uv - uDir * 1.384615)) * 0.316216;\n"
+	"\tsum += (texture2D(bitmap, uv + uDir * 3.230769) + texture2D(bitmap, uv - uDir * 3.230769)) * 0.070270;\n"
+	"\tgl_FragColor = sum * openfl_Alphav;\n"
+	"}\n";
+
+/** Reads a 'key=value' line out of the stats text. Returns false when the key is absent. */
+static bool StatField (const char* stats, const char* key, char* out, size_t capacity) {
+
+	size_t keyLength = strlen (key);
+	const char* cursor = stats;
+
+	while (cursor && *cursor) {
+
+		if (strncmp (cursor, key, keyLength) == 0 && cursor[keyLength] == '=') {
+
+			const char* value = cursor + keyLength + 1;
+			const char* end = strchr (value, '\n');
+			size_t length = end ? (size_t)(end - value) : strlen (value);
+
+			if (length >= capacity) length = capacity - 1;
+
+			memcpy (out, value, length);
+			out[length] = 0;
+			return true;
+
+		}
+
+		const char* newline = strchr (cursor, '\n');
+		cursor = newline ? newline + 1 : 0;
+
+	}
+
+	return false;
+
+}
+
+static double StatNumber (const char* stats, const char* key);
+
+/** Creates N same-size textures and reports what the allocator did, then keeps them. */
+static void CreateTexAllocScene () {
+
+	g_texAllocHandles = (lime_vulkan_texture_handle*)calloc ((size_t)g_texAllocCount, sizeof (lime_vulkan_texture_handle));
+
+	size_t bytes = (size_t)g_texAllocSize * (size_t)g_texAllocSize * 4u;
+	unsigned char* pixels = (unsigned char*)malloc (bytes);
+
+	for (size_t i = 0; i < bytes; i += 4) {
+
+		pixels[i + 0] = (unsigned char)(i & 0xFF);
+		pixels[i + 1] = (unsigned char)((i >> 8) & 0xFF);
+		pixels[i + 2] = 0x40;
+		pixels[i + 3] = 0xFF;
+
+	}
+
+	int created = 0;
+
+	for (int i = 0; i < g_texAllocCount; ++i) {
+
+		g_texAllocHandles[i] = lime_vulkan_texture_create (pixels, g_texAllocSize, g_texAllocSize, LIME_VULKAN_TEXTURE_NONE);
+
+		if (g_texAllocHandles[i]) created++;
+
+	}
+
+	free (pixels);
+
+	printf ("[demo] texalloc created=%d of %d (%dx%d)\n", created, g_texAllocCount, g_texAllocSize, g_texAllocSize);
+
+	char stats[4096] = { 0 };
+	lime_vulkan_batch_stats (stats, sizeof (stats));
+
+	printf ("[demo] texalloc memAllocs=%d memReserved=%.1fMB memTex=%.1fMB\n",
+		(int)StatNumber (stats, "memAllocs"), StatNumber (stats, "memReserved"), StatNumber (stats, "memTex"));
+
+}
+
+static void DestroyTexAllocScene () {
+
+	if (!g_texAllocHandles) return;
+
+	for (int i = 0; i < g_texAllocCount; ++i) {
+
+		if (g_texAllocHandles[i]) lime_vulkan_texture_destroy (g_texAllocHandles[i]);
+
+		g_texAllocHandles[i] = 0;
+
+	}
+
+	free (g_texAllocHandles);
+	g_texAllocHandles = 0;
+
+	char stats[4096] = { 0 };
+	lime_vulkan_batch_stats (stats, sizeof (stats));
+
+	printf ("[demo] texalloc after destroy memAllocs=%d memReserved=%.1fMB memTex=%.1fMB\n",
+		(int)StatNumber (stats, "memAllocs"), StatNumber (stats, "memReserved"), StatNumber (stats, "memTex"));
+
+}
+
+static double StatNumber (const char* stats, const char* key) {
+
+	char value[64];
+
+	if (!StatField (stats, key, value, sizeof (value))) return 0.0;
+
+	return atof (value);
+
+}
+
 /**
  * Position, size and tint of every sprite derive from its index: a frame is
  * always identical, which is what makes pixel comparison possible.
@@ -218,6 +375,45 @@ static void DrawSprite (int index, float time, int screenWidth, int screenHeight
 	tint = (alpha << 24) | (tint & 0x00FFFFFFu);
 
 	lime_vulkan_batch_quad (px, py, size, size, 0.0f, 0.0f, 1.0f, 1.0f, tint);
+
+}
+
+/**
+ * Pixel self test for the blend modes the fixed function unit can express:
+ * subtract, darken and lighten. Four bands over a mid grey clear, each with a
+ * colour whose expected result is a single number:
+ *
+ *   band 0  darken   red    on grey 128 -> (128,   0,   0)
+ *   band 1  lighten  red    on grey 128 -> (255, 128,   0)
+ *   band 2  subtract red    on grey 128 -> (  0, 128, 128)   dst - src, clamped
+ *   band 3  darken   black  on grey 128 -> (  0,   0,   0)
+ */
+static bool DrawBlendScene () {
+
+	int screenWidth = g_width;
+	int screenHeight = g_height;
+	int band = screenHeight / 4;
+
+	const float grey[4] = { 0.5f, 0.5f, 0.5f, 1.0f };
+
+	if (!lime_vulkan_batch_begin (screenWidth, screenHeight, grey)) return false;
+
+	// Handle 0 is the 1x1 white texture, so the quad colour is the fragment colour.
+	lime_vulkan_batch_set_texture (0);
+
+	lime_vulkan_batch_set_blend (LIME_VULKAN_BLEND_DARKEN);
+	lime_vulkan_batch_quad (0.0f, 0.0f, (float)screenWidth, (float)band, 0.0f, 0.0f, 1.0f, 1.0f, 0xFFFF0000u);
+
+	lime_vulkan_batch_set_blend (LIME_VULKAN_BLEND_LIGHTEN);
+	lime_vulkan_batch_quad (0.0f, (float)band, (float)screenWidth, (float)band, 0.0f, 0.0f, 1.0f, 1.0f, 0xFFFF0000u);
+
+	lime_vulkan_batch_set_blend (LIME_VULKAN_BLEND_SUBTRACT);
+	lime_vulkan_batch_quad (0.0f, (float)(band * 2), (float)screenWidth, (float)band, 0.0f, 0.0f, 1.0f, 1.0f, 0xFFFF0000u);
+
+	lime_vulkan_batch_set_blend (LIME_VULKAN_BLEND_DARKEN);
+	lime_vulkan_batch_quad (0.0f, (float)(band * 3), (float)screenWidth, (float)band, 0.0f, 0.0f, 1.0f, 1.0f, 0xFF000000u);
+
+	return lime_vulkan_batch_end () != 0;
 
 }
 
@@ -652,6 +848,172 @@ static bool DrawShaderScene (float time) {
 
 }
 
+static void ApplyBlurDirection (const float direction[2]) {
+
+	lime_vulkan_program_set_vec2 (g_blurProgram, "uDir", direction);
+
+}
+
+static bool CreateBlurProgram () {
+
+	lime_vulkan_program_desc desc;
+	memset (&desc, 0, sizeof (desc));
+	desc.vertexSource = kCameraVertex;
+	desc.fragmentSource = kBlurFragment;
+	desc.flags = 0;
+	desc.cacheDirectory = g_shaderCache;
+
+	g_blurProgram = lime_vulkan_program_create (&desc);
+
+	if (!g_blurProgram) {
+
+		char status[1024] = { 0 };
+		lime_vulkan_status (status, sizeof (status));
+		printf ("[demo] blur program failed: %s\n", ExtractError (status));
+		return false;
+
+	}
+
+	return true;
+
+}
+
+/** Three camera layers with a blur on each, the shape a game frame actually has. */
+static bool CreateCamerasScene () {
+
+	if (!CreateBlurProgram ()) return false;
+
+	for (int i = 0; i < 3; ++i) {
+
+		g_cameraTargets[i] = lime_vulkan_target_create (g_width, g_height);
+		g_blurScratch[i] = lime_vulkan_target_create (g_width, g_height);
+
+		if (!lime_vulkan_target_valid (g_cameraTargets[i]) || !lime_vulkan_target_valid (g_blurScratch[i])) {
+
+			char status[512] = { 0 };
+			lime_vulkan_status (status, sizeof (status));
+			printf ("[demo] could not create the camera targets: %s\n", ExtractError (status));
+			return false;
+
+		}
+
+	}
+
+	printf ("[demo] scene=cameras targets=3x2 sprites=%d\n", g_cameraSprites);
+	return true;
+
+}
+
+static void DestroyCamerasScene () {
+
+	for (int i = 0; i < 3; ++i) {
+
+		if (g_cameraTargets[i]) lime_vulkan_texture_destroy (g_cameraTargets[i]);
+		if (g_blurScratch[i]) lime_vulkan_texture_destroy (g_blurScratch[i]);
+
+		g_cameraTargets[i] = 0;
+		g_blurScratch[i] = 0;
+
+	}
+
+	if (g_blurProgram) lime_vulkan_program_destroy (g_blurProgram);
+	g_blurProgram = 0;
+
+}
+
+/**
+ * One camera layer: draw the sprites offscreen with a panning view matrix, blur
+ * it horizontally and vertically, then composite it into the window.
+ */
+static void DrawCameraLayer (int index, float time, lime_vulkan_texture_handle spriteTexture) {
+
+	int width = g_width;
+	int height = g_height;
+
+	// Each camera pans at its own speed so the three layers never line up.
+	double pan = (double)time * (8.0 + index * 5.0);
+
+	double view[6] = { 1.0, 0.0, 0.0, 1.0, -pan, 0.0 };
+
+	// ---- sprites, offscreen ----
+	lime_vulkan_batch_begin_target (g_cameraTargets[index], 0x00000000);
+
+	lime_vulkan_batch_set_view (view);
+	lime_vulkan_batch_set_program (0);
+	lime_vulkan_batch_set_texture (spriteTexture);
+	lime_vulkan_batch_set_blend (LIME_VULKAN_BLEND_NORMAL);
+
+	for (int i = 0; i < g_cameraSprites; ++i) {
+
+		DrawSprite (i + index * 4096, time, width, height);
+
+	}
+
+	lime_vulkan_batch_end_target ();
+
+	// ---- blur, horizontal ----
+	double identity[6] = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
+	float horizontal[2] = { 1.0f / (float)width, 0.0f };
+
+	lime_vulkan_batch_begin_target (g_blurScratch[index], 0x00000000);
+	lime_vulkan_batch_set_view (identity);
+	lime_vulkan_batch_set_program (g_blurProgram);
+	lime_vulkan_batch_set_texture (g_cameraTargets[index]);
+	lime_vulkan_batch_set_blend (LIME_VULKAN_BLEND_NORMAL);
+
+	ApplyBlurDirection (horizontal);
+	lime_vulkan_batch_quad (0.0f, 0.0f, (float)width, (float)height, 0.0f, 0.0f, 1.0f, 1.0f, 0xFFFFFFFFu);
+
+	lime_vulkan_batch_end_target ();
+
+	// ---- blur, vertical, back into the camera target ----
+	float vertical[2] = { 0.0f, 1.0f / (float)height };
+
+	lime_vulkan_batch_begin_target (g_cameraTargets[index], 0x00000000);
+	lime_vulkan_batch_set_view (identity);
+	lime_vulkan_batch_set_program (g_blurProgram);
+	lime_vulkan_batch_set_texture (g_blurScratch[index]);
+
+	ApplyBlurDirection (vertical);
+	lime_vulkan_batch_quad (0.0f, 0.0f, (float)width, (float)height, 0.0f, 0.0f, 1.0f, 1.0f, 0xFFFFFFFFu);
+
+	lime_vulkan_batch_end_target ();
+
+	lime_vulkan_batch_set_program (0);
+
+}
+
+static bool DrawCamerasScene (float time, lime_vulkan_texture_handle spriteTexture) {
+
+	const float clearColor[4] = { 0.02f, 0.02f, 0.05f, 1.0f };
+
+	if (!lime_vulkan_batch_begin (g_width, g_height, clearColor)) return false;
+
+	for (int i = 0; i < 3; ++i) {
+
+		DrawCameraLayer (i, time, spriteTexture);
+
+	}
+
+	// ---- composite: the first layer opaque, the other two added, like a HUD on top ----
+	double identity[6] = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
+	lime_vulkan_batch_set_view (identity);
+	lime_vulkan_batch_set_program (0);
+
+	for (int i = 0; i < 3; ++i) {
+
+		lime_vulkan_batch_set_texture (g_cameraTargets[i]);
+		lime_vulkan_batch_set_blend (i == 0 ? LIME_VULKAN_BLEND_NORMAL : LIME_VULKAN_BLEND_ADD);
+
+		lime_vulkan_batch_quad (0.0f, 0.0f, (float)g_width, (float)g_height,
+			0.0f, 0.0f, 1.0f, 1.0f, i == 0 ? 0xFFFFFFFFu : 0x40FFFFFFu);
+
+	}
+
+	return lime_vulkan_batch_end () != 0;
+
+}
+
 /** Builds a program. On failure it prints the translation and compile log, since this path is where things break. */
 static bool CreateShaderSceneProgram () {
 
@@ -687,7 +1049,19 @@ static bool CreateShaderSceneProgram () {
 	desc.flags = g_shaderFlags;
 	desc.cacheDirectory = g_shaderCache;
 
+	// Program creation includes the GLSL translation and the driver's pipeline
+	// compile, which is where a cold start spends its time. Printed so the effect
+	// of the on-disk pipeline cache can be measured instead of guessed.
+	LARGE_INTEGER programStart, programEnd, programFrequency;
+	QueryPerformanceFrequency (&programFrequency);
+	QueryPerformanceCounter (&programStart);
+
 	g_program = lime_vulkan_program_create (&desc);
+
+	QueryPerformanceCounter (&programEnd);
+
+	printf ("[demo] program created in %.1f ms\n",
+		(double)(programEnd.QuadPart - programStart.QuadPart) * 1000.0 / (double)programFrequency.QuadPart);
 
 	free (vertexSource);
 	free (fragmentSource);
@@ -742,14 +1116,18 @@ int main (int argc, char** argv) {
 		else if (strncmp (argv[i], "--scene=", 8) == 0) {
 
 			value = argv[i] + 8;
-			batchScene = (strcmp (value, "batch") == 0);
+			batchScene = (strcmp (value, "batch") == 0) || (strcmp (value, "sprites") == 0);
 			testScene = (strcmp (value, "test") == 0);
 			g_probe = (strcmp (value, "probe") == 0);
 			g_shaderScene = (strcmp (value, "shader") == 0);
 			g_quadsScene = (strcmp (value, "quads") == 0);
+			g_camerasScene = (strcmp (value, "cameras") == 0);
+			g_texAllocScene = (strcmp (value, "texalloc") == 0);
+			g_sceneName = value;
 			if (g_probe) batchScene = true;
 			if (g_shaderScene) batchScene = true;
 			if (g_quadsScene) batchScene = true;
+			if (g_camerasScene) batchScene = true;
 
 			if (testScene) batchScene = true;  // same batch path
 
@@ -777,7 +1155,10 @@ int main (int argc, char** argv) {
 			sscanf_s (argv[i] + 7, "%d,%d,%d,%d", &g_quadRect[0], &g_quadRect[1], &g_quadRect[2], &g_quadRect[3]);
 
 		}
-		else if (strncmp (argv[i], "--sprites=", 10) == 0) g_shaderSprites = atoi (argv[i] + 10);
+		else if (strncmp (argv[i], "--sprites=", 10) == 0) { g_shaderSprites = atoi (argv[i] + 10); g_cameraSprites = g_shaderSprites; }
+		else if (strcmp (argv[i], "--perf") == 0) g_perfOutput = true;
+		else if (strncmp (argv[i], "--textures=", 11) == 0) g_texAllocCount = atoi (argv[i] + 11);
+		else if (strncmp (argv[i], "--size=", 7) == 0) g_texAllocSize = atoi (argv[i] + 7);
 	else if (strcmp (argv[i], "--plain") == 0) g_shaderFlags |= LIME_VULKAN_PROGRAM_PLAIN;
 		else if (strcmp (argv[i], "--straight-alpha") == 0) g_shaderFlags |= LIME_VULKAN_PROGRAM_STRAIGHT_ALPHA;
 		else if (strcmp (argv[i], "--no-dialog") == 0) g_noDialog = true;
@@ -786,6 +1167,9 @@ int main (int argc, char** argv) {
 	}
 
 	if (quadCount < 1) quadCount = 1;
+	if (g_texAllocCount < 1) g_texAllocCount = 1;
+	if (g_texAllocCount > 4096) g_texAllocCount = 4096;
+	if (g_texAllocSize < 16) g_texAllocSize = 16;
 
 	WNDCLASSA windowClass = {};
 	windowClass.style = CS_HREDRAW | CS_VREDRAW;
@@ -896,6 +1280,23 @@ int main (int argc, char** argv) {
 
 		printf ("[demo] scene=quads texture=%dx%d view=(2,0,0,2,64,32) quads=3\n", kTextureSize, kTextureSize);
 
+	} else if (g_camerasScene) {
+
+		BuildDemoTexture ();
+
+		texture = lime_vulkan_texture_create (g_texturePixels, kTextureSize, kTextureSize, LIME_VULKAN_TEXTURE_NONE);
+
+		if (texture == 0) {
+
+			char status[512] = { 0 };
+			lime_vulkan_status (status, sizeof (status));
+			MessageBoxA (hwnd, status, "lime-vulkan demo: texture upload failed", MB_OK | MB_ICONERROR);
+			return 3;
+
+		}
+
+		if (!CreateCamerasScene ()) return 5;
+
 	} else if (batchScene) {
 
 		BuildDemoTexture ();
@@ -912,6 +1313,15 @@ int main (int argc, char** argv) {
 		}
 
 		printf ("[demo] texture %dx%d uploaded, scene=batch quads=%d\n", kTextureSize, kTextureSize, quadCount);
+
+	} else if (strcmp (g_sceneName, "blend") == 0) {
+
+		printf ("[demo] scene=blend bands=4\n");
+		if (texture) lime_vulkan_texture_destroy (texture);
+
+	} else if (g_texAllocScene) {
+
+		CreateTexAllocScene ();
 
 	} else {
 
@@ -971,7 +1381,15 @@ int main (int argc, char** argv) {
 
 		bool ok = false;
 
-		if (g_shaderScene) {
+		if (strcmp (g_sceneName, "blend") == 0) {
+
+			ok = DrawBlendScene ();
+
+		} else if (g_camerasScene) {
+
+			ok = DrawCamerasScene (totalSeconds, texture);
+
+		} else if (g_shaderScene) {
 
 			ok = DrawShaderScene (totalSeconds);
 
@@ -1058,11 +1476,38 @@ int main (int argc, char** argv) {
 
 	}
 
+	// One machine readable line, printed while the device is still up: the perf
+	// harness in tools/perf-baseline.ps1 parses it into PERF.md.
+	if (g_perfOutput) {
+
+		char stats[4096] = { 0 };
+		lime_vulkan_batch_stats (stats, sizeof (stats));
+
+		char perfFrames[32] = "0";
+		StatField (stats, "perfFrames", perfFrames, sizeof (perfFrames));
+
+		printf ("[demo] perf scene=%s frames=%s cpuP50=%.2f cpuP95=%.2f cpuP99=%.2f cpuMax=%.2f "
+			"gpuP50=%.2f gpuP95=%.2f gpuP99=%.2f gpuSupported=%d draws=%d uploadMB=%.2f\n",
+			g_sceneName, perfFrames,
+			StatNumber (stats, "cpuP50"), StatNumber (stats, "cpuP95"),
+			StatNumber (stats, "cpuP99"), StatNumber (stats, "cpuMax"),
+			StatNumber (stats, "gpuP50"), StatNumber (stats, "gpuP95"), StatNumber (stats, "gpuP99"),
+			(int)StatNumber (stats, "gpuSupported"),
+			(int)StatNumber (stats, "drawCalls"), StatNumber (stats, "uploadMB"));
+
+	}
+
+	// The context goes first: it waits for the device to go idle. Destroying a
+	// texture or a program while a submitted frame still references it is a
+	// use-after-free on the GPU, and the demo used to do exactly that at exit.
+	lime_vulkan_context_destroy ();
+
+	DestroyTexAllocScene ();
+	DestroyCamerasScene ();
+
 	if (texture) lime_vulkan_texture_destroy (texture);
 	if (g_shaderTexture) lime_vulkan_texture_destroy (g_shaderTexture);
 	if (g_program) lime_vulkan_program_destroy (g_program);
-
-	lime_vulkan_context_destroy ();
 	DestroyWindow (hwnd);
 
 	{

@@ -24,7 +24,22 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-GAME = ROOT.parent / "FNF-SeiunEngine"
+
+
+def find_game_root() -> Path:
+    """The game repository that owns this copy of the renderer.
+
+    It used to sit next to vulkan/; now the renderer lives under the project's
+    .haxelib/lime/git/vulkan, so hard coding ROOT.parent was only right for one
+    layout. Walk up until the capture script shows up instead.
+    """
+    for candidate in [ROOT] + list(ROOT.parents):
+        if (candidate / "tools" / "vulkan-capture.ps1").exists():
+            return candidate
+    return ROOT.parent / "FNF-SeiunEngine"
+
+
+GAME = find_game_root()
 CAPTURE = GAME / "tools" / "vulkan-capture.ps1"
 OUT_DIR = ROOT / "build" / "game"
 

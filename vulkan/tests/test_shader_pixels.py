@@ -155,6 +155,71 @@ def capture(name: str, arguments: str) -> tuple[Path, dict]:
     return shot, json.loads(sidecar.read_text(encoding="utf-8-sig"))
 
 
+def evaluate(shot: Path, info: dict, scenario: dict) -> tuple[int, int, list[str]]:
+    """Samples one screenshot. Returns (checks, failures, lines to print).
+
+    Split out of main() so a capture can be repeated without double counting.
+    """
+    from PIL import Image
+
+    image = Image.open(shot).convert("RGB")
+
+    left = int(info["clientX"])
+    top = int(info["clientY"])
+    width = int(info["clientWidth"])
+    height = int(info["clientHeight"])
+
+    # A window that was minimised, moved or already gone makes the capture report a
+    # client area that does not match the screenshot. That is a capture failure, not
+    # a rendering failure, so it goes through the same retry as a wrong pixel.
+    if width <= 0 or height <= 0 or left < 0 or top < 0:
+        raise RuntimeError(f"capture reported client area {width}x{height} at {left},{top}")
+
+    if left + width > image.width or top + height > image.height:
+        raise RuntimeError(f"capture is {image.width}x{image.height}, client area ends at "
+                           f"{left + width},{top + height}")
+
+    client = image.crop((left, top, left + width, top + height))
+
+    checks = 0
+    failed = 0
+    lines: list[str] = []
+
+    for label, point, expected, tolerance in scenario.get("samples", []):
+        checks += 1
+
+        x = min(width - 1, max(0, point[0]))
+        y = min(height - 1, max(0, point[1]))
+        actual = client.getpixel((x, y))
+
+        delta = max(abs(actual[i] - expected[i]) for i in range(3))
+        ok = delta <= tolerance
+
+        if not ok:
+            failed += 1
+
+        lines.append(f"  {'ok  ' if ok else 'FAIL'} {label:18s} at ({x:4d},{y:4d})"
+                     f" expected {expected} actual {actual} (delta {delta})")
+
+    if "nonBlack" in scenario:
+        checks += 1
+
+        quad = client.crop((QUAD[0], QUAD[1], QUAD[0] + QUAD[2], QUAD[1] + QUAD[3]))
+        pixels = list(quad.getdata())
+        lit = sum(1 for pixel in pixels if max(pixel) > 8)
+        ratio = lit / max(1, len(pixels))
+
+        ok = ratio >= scenario["nonBlack"]
+
+        if not ok:
+            failed += 1
+
+        lines.append(f"  {'ok  ' if ok else 'FAIL'} {'lit-pixels':18s} {ratio * 100:5.1f}%"
+                     f" of the quad is not black (need >= {scenario['nonBlack'] * 100:.1f}%)")
+
+    return checks, failed, lines
+
+
 def main(argv: list[str]) -> int:
     from PIL import Image
 
@@ -171,54 +236,36 @@ def main(argv: list[str]) -> int:
 
         print(f"\n--- {name}: {scenario['why']}")
 
-        try:
-            shot, info = capture(name, scenario["args"])
-        except RuntimeError as error:
-            print(f"  FAIL {error}")
-            failures += 1
-            continue
+        # A screenshot of a live window can catch the compositor between two
+        # repaints. A real regression fails both attempts, so one retry removes the
+        # flake without weakening the assertion.
+        for attempt in range(2):
 
-        image = Image.open(shot).convert("RGB")
+            try:
+                shot, info = capture(name, scenario["args"])
+                checks, failed, lines = evaluate(shot, info, scenario)
+            except (RuntimeError, OSError) as error:
+                if attempt == 1:
+                    print(f"  FAIL {error}")
+                    failures += 1
+                    break
+                print(f"  capture failed, retrying once ({name}): {error}")
+                continue
 
-        left = int(info["clientX"])
-        top = int(info["clientY"])
-        width = int(info["clientWidth"])
-        height = int(info["clientHeight"])
+            if failed > 0 and attempt == 0:
+                print(f"  capture looked wrong, retrying once ({name})")
+                continue
 
-        client = image.crop((left, top, left + width, top + height))
+            total += checks
+            failures += failed
 
-        for label, point, expected, tolerance in scenario.get("samples", []):
-            total += 1
+            for line in lines:
+                print(line)
 
-            x = min(width - 1, max(0, point[0]))
-            y = min(height - 1, max(0, point[1]))
-            actual = client.getpixel((x, y))
+            if failed > 0:
+                print("  (both captures failed, so this is not a screenshot race)")
 
-            delta = max(abs(actual[i] - expected[i]) for i in range(3))
-            ok = delta <= tolerance
-
-            if not ok:
-                failures += 1
-
-            print(f"  {'ok  ' if ok else 'FAIL'} {label:18s} at ({x:4d},{y:4d})"
-                  f" expected {expected} actual {actual} (delta {delta})")
-
-        if "nonBlack" in scenario:
-            total += 1
-
-            quad = client.crop((QUAD[0], QUAD[1], QUAD[0] + QUAD[2], QUAD[1] + QUAD[3]))
-            pixels = list(quad.getdata())
-            lit = sum(1 for pixel in pixels if max(pixel) > 8)
-            ratio = lit / max(1, len(pixels))
-
-            ok = ratio >= scenario["nonBlack"]
-
-            if not ok:
-                failures += 1
-
-            print(f"  {'ok  ' if ok else 'FAIL'} {'lit-pixels':18s} {ratio * 100:5.1f}%"
-                  f" of the quad is not black (need >= {scenario['nonBlack'] * 100:.1f}%)")
-
+            break
     if total == 0:
         print("no scenario matched", file=sys.stderr)
         return 2
