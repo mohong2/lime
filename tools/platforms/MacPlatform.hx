@@ -166,11 +166,28 @@ class MacPlatform extends PlatformTarget
 
 	private function getNdllDirectory():String
 	{
-		// Every 64-bit macOS ndll - including Apple Silicon - lives in ndll/Mac64.
-		// That is the only 64-bit directory lime copies from, and it is also where
-		// the host tools' CFFI loader looks for lime.ndll when running on an
-		// arm64 runner (hxp tries ndll/<system> and ndll/<system>64 only).
-		return (is64 || targetFlags.exists("arm64")) ? "Mac64" : "Mac";
+		// ndll/Mac64 is the only 64-bit directory the host tools' CFFI loader looks
+		// at (hxp tries ndll/<system> and ndll/<system>64), and on an Intel host it
+		// also holds the x86_64 copy hxcpp builds for those tools - IconHelper
+		// dlopens that one while the build is running, so it has to stay the host's
+		// architecture.
+		//
+		// An Apple Silicon cross-build therefore packages ndll/MacArm64 instead:
+		// hxcpp puts HXCPP_ARM64 output there (tools/hxcpp/BuildTool.hx), and copying
+		// from ndll/Mac64 shipped the x86_64 tool build inside an arm64 .app - the
+		// executable said arm64 and the ndll beside it said x86_64, which only shows
+		// up as a dyld failure on a real Apple Silicon machine.
+		//
+		// A native arm64 host is still unhandled: hxcpp sends its host build to
+		// ndll/MacArm64 too, and the loader never looks there. That needs the BINDIR
+		// change from the fork's old haxe-4.3 tip (552e1d13) ported onto the rebased
+		// hxcpp branch; once it is, this should return "Mac64" for arm64 as well.
+		if (targetFlags.exists("arm64") && System.hostArchitecture != ARM64)
+		{
+			return "MacArm64";
+		}
+
+		return is64 ? "Mac64" : "Mac";
 	}
 
 	public override function build():Void
