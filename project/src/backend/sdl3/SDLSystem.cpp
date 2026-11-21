@@ -182,6 +182,22 @@ namespace lime {
 			case APPLICATION: {
 
 				const char* path = SDL_GetBasePath ();
+
+				if (path == NULL) {
+
+					// SDL_GetBasePath () is NULL on Android: SDL3's SDL_SYS_GetBasePath ()
+					// is a stub that reports "unsupported" and returns NULL (the process
+					// working directory is "/"), and SDL_filesystem.c caches that NULL.
+					// Handing it to std::wstring/strlen is a null dereference on the first
+					// read of System.applicationDirectory, and the asset preloader asks
+					// for exactly that on every boot - a SIGSEGV before the first frame.
+					// Answer "/" instead: a directory that exists on every platform, and
+					// the one relative reads resolve against there.
+					result = new std::wstring (L"/");
+					break;
+
+				}
+
 				#ifdef HX_WINDOWS
 				std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
 				result = new std::wstring (converter.from_bytes(path));
@@ -199,6 +215,18 @@ namespace lime {
 			case APPLICATION_STORAGE: {
 
 				const char* path = SDL_GetPrefPath (company, title);
+
+				if (path == NULL) {
+
+					// SDL_GetPrefPath () gives up when the platform cannot name a writable
+					// directory (on Android: SDL_GetAndroidInternalStoragePath () returns
+					// NULL while the Java side is not up yet). Leave the result null - the
+					// Haxe side already reads a missing directory as "unknown" - instead
+					// of dereferencing it.
+					break;
+
+				}
+
 				#ifdef HX_WINDOWS
 				std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
 				result = new std::wstring (converter.from_bytes(path));

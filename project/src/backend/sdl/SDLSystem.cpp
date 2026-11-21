@@ -104,6 +104,20 @@ namespace lime {
 			case APPLICATION: {
 
 				char* path = SDL_GetBasePath ();
+
+				if (path == NULL) {
+
+					// SDL_GetBasePath () is NULL on Android: SDL2's android backend reports
+					// "unsupported" and returns NULL (the process working directory is
+					// "/"). Handing it to strlen is a null dereference on the first read of
+					// System.applicationDirectory - the asset preloader does that on every
+					// boot. Answer "/" instead: a directory that exists, and the one
+					// relative reads resolve against there.
+					result = new std::wstring (L"/");
+					break;
+
+				}
+
 				#ifdef HX_WINDOWS
 				std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
 				result = new std::wstring (converter.from_bytes(path));
@@ -118,6 +132,15 @@ namespace lime {
 			case APPLICATION_STORAGE: {
 
 				char* path = SDL_GetPrefPath (company, title);
+
+				if (path == NULL) {
+
+					// No writable directory to name; leave the result null rather than
+					// dereferencing it (the Haxe side reads null as "unknown").
+					break;
+
+				}
+
 				#ifdef HX_WINDOWS
 				std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
 				result = new std::wstring (converter.from_bytes(path));
