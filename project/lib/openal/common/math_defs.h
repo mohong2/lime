@@ -26,21 +26,29 @@ static const union msvc_inf_hack {
 #define HUGE_VALF (msvc_inf_union.f)
 #endif
 
-#ifndef HAVE_LOG2F
+/* MSVC ships log2f/cbrtf/copysignf in the CRT, and since the VS2026 toolchain
+   (windows-2025-vs2026 runner images) treats them as real intrinsics: a fallback
+   definition is not merely redundant there, it is a hard error -
+     lib/openal/common/math_defs.h(44): error C2169: 'copysignf': intrinsic
+     function, cannot be defined
+   openal is compiled here without HX_WINDOWS (config.h only pulls a
+   config-<platform>.h under HX_*), so HAVE_LOG2F/HAVE_CBRTF/HAVE_COPYSIGNF are
+   never defined for MSVC and all three fallbacks get compiled. Skip them. */
+#if !defined(HAVE_LOG2F) && !defined(_MSC_VER)
 static inline float log2f(float f)
 {
     return logf(f) / logf(2.0f);
 }
 #endif
 
-#ifndef HAVE_CBRTF
+#if !defined(HAVE_CBRTF) && !defined(_MSC_VER)
 static inline float cbrtf(float f)
 {
     return powf(f, 1.0f/3.0f);
 }
 #endif
 
-#ifndef HAVE_COPYSIGNF
+#if !defined(HAVE_COPYSIGNF) && !defined(_MSC_VER)
 static inline float copysignf(float x, float y)
 {
     union {
