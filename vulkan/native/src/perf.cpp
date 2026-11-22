@@ -90,6 +90,30 @@ namespace vulkan {
 
 	}
 
+	/** Zeroes the per-wait split of the frame that is about to open. */
+	void PerfResetFrame () {
+
+		State::FrameWaits& waits = S ().waits;
+
+		waits.fence = 0.0f;
+		waits.acquire = 0.0f;
+		waits.submit = 0.0f;
+		waits.present = 0.0f;
+		waits.staging = 0.0f;
+		waits.uploadDrain = 0.0f;
+		waits.uploadFlush = 0.0f;
+		waits.uploadQueue = 0.0f;
+		waits.beginTotal = 0.0f;
+		waits.endTotal = 0.0f;
+		waits.batchSubmit = 0.0f;
+		waits.beginPass = 0.0f;
+		waits.endPass = 0.0f;
+		waits.endBuffer = 0.0f;
+		waits.presentBarrier = 0.0f;
+		waits.timestamp = 0.0f;
+
+	}
+
 	/** Two timestamps per frame slot: start and end of the submitted work. */
 	bool CreatePerfQueries () {
 
@@ -267,6 +291,7 @@ namespace vulkan {
 
 		State& state = S ();
 		FramePerf& perf = state.perf;
+		State::FrameWaits& waits = state.waits;
 		Batch& batch = state.batch;
 
 		static float cpu[FramePerf::HISTORY];
@@ -301,7 +326,12 @@ namespace vulkan {
 			"gpuP50=%.2f\ngpuP95=%.2f\ngpuP99=%.2f\n"
 			"gpuSupported=%d\n"
 			"uploadMB=%.1f\nuploadCopies=%llu\nuploadFlushes=%llu\nuploadWaits=%llu\nuploadFailures=%llu\n"
-			"bindTextures=%u\nbindPipelines=%u\nbindScissors=%u\n",
+			"bindTextures=%u\nbindPipelines=%u\nbindScissors=%u\n"
+			"tFence=%.2f\ntAcquire=%.2f\ntSubmit=%.2f\ntPresent=%.2f\n"
+			"tStaging=%.2f\ntUploadDrain=%.2f\ntUploadFlush=%.2f\ntUploadQueue=%.2f\n"
+			"tBegin=%.2f\ntEnd=%.2f\ntBatch=%.2f\ntBeginPass=%.2f\ntEndPass=%.2f\ntEndBuffer=%.2f\n"
+			"tPresentBarrier=%.2f\ntTimestamp=%.2f\n"
+			"suboptimal=%u\nswapchainRebuilds=%u\n",
 			perf.frames,
 			cpuP50, cpuP95, cpuP99, cpuMax,
 			gpuP50, gpuP95, gpuP99,
@@ -311,7 +341,12 @@ namespace vulkan {
 			(unsigned long long)state.upload.flushes,
 			(unsigned long long)state.upload.waits,
 			(unsigned long long)state.upload.failures,
-			batch.bindTextures, batch.bindPipelines, batch.bindScissors);
+			batch.bindTextures, batch.bindPipelines, batch.bindScissors,
+			waits.fence, waits.acquire, waits.submit, waits.present,
+			waits.staging, waits.uploadDrain, waits.uploadFlush, waits.uploadQueue,
+			waits.beginTotal, waits.endTotal, waits.batchSubmit, waits.beginPass, waits.endPass, waits.endBuffer,
+			waits.presentBarrier, waits.timestamp,
+			state.presentSuboptimal, state.swapchainRebuilds);
 
 		if (written < 0) return 0;
 		if (written >= (int)sizeof (text)) written = (int)sizeof (text) - 1;

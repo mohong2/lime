@@ -978,12 +978,63 @@ namespace vulkan {
 		VkSurfaceFormatKHR surfaceFormat = ChooseSurfaceFormat (formats);
 		VkPresentModeKHR presentMode = ChoosePresentMode (modes, state.options.presentMode);
 
+		state.surfaceTransform = capabilities.currentTransform;
+		state.surfaceTransforms = capabilities.supportedTransforms;
+		state.surfaceExtent = capabilities.currentExtent;
+		state.surfaceMinExtent = capabilities.minImageExtent;
+		state.surfaceMaxExtent = capabilities.maxImageExtent;
+
 		VkExtent2D extent = capabilities.currentExtent;
+
+		// The engine always renders in the window's logical orientation: the Haxe
+		// side builds its projection from the lime window size, and the viewport and
+		// scissor come from this extent. A surface whose currentTransform is not
+		// IDENTITY (Android does that on a rotated display: the panel is portrait,
+		// the game is landscape) would have the compositor rotate that already
+		// upright image by the same angle, so the game is drawn sideways and
+		// squeezed and a 90 degree pre-rotation looks like a broken portrait mode.
+		// Asking for IDENTITY keeps the image 1:1 with the window. Only fall back to
+		// the surface transform when IDENTITY is not offered at all.
+		VkSurfaceTransformFlagBitsKHR preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+
+		if (!(capabilities.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)) {
+
+			preTransform = capabilities.currentTransform;
+
+		}
+
+		state.surfacePreTransform = preTransform;
+
+		{
+			std::string fmts;
+
+			for (uint32_t i = 0; i < formatCount; ++i) {
+
+				fmts += std::to_string ((int)formats[i].format) + "/" + std::to_string ((int)formats[i].colorSpace) + " ";
+
+			}
+
+			LIME_VK_LOGCAT ("surface caps: %ux%u min=%u max=%u transform=%d pre=%d formats=[%s] modes=%u",
+				capabilities.currentExtent.width, capabilities.currentExtent.height,
+				capabilities.minImageCount, capabilities.maxImageCount,
+				(int)capabilities.currentTransform, (int)preTransform,
+				fmts.c_str(), (unsigned)modeCount);
+		}
 
 		if (extent.width == 0xFFFFFFFFu) {
 
 			extent.width = (uint32_t)std::max (1, std::min ((int)capabilities.maxImageExtent.width, width));
 			extent.height = (uint32_t)std::max (1, std::min ((int)capabilities.maxImageExtent.height, height));
+
+		} else if (preTransform == VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR && width > 0 && height > 0
+			&& (int)extent.width != width && (int)extent.height != height
+			&& (int)extent.width == height && (int)extent.height == width) {
+
+			// Some surfaces report the extent in the panel's orientation while the
+			// window itself is rotated. With IDENTITY the image must be in window
+			// space, so swap the axes when they are simply transposed.
+			extent.width = (uint32_t)width;
+			extent.height = (uint32_t)height;
 
 		}
 
@@ -1020,7 +1071,7 @@ namespace vulkan {
 		createInfo.imageArrayLayers = 1;
 		createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 		createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-		createInfo.preTransform = capabilities.currentTransform;
+		createInfo.preTransform = preTransform;
 		createInfo.compositeAlpha = compositeAlpha;
 		createInfo.presentMode = presentMode;
 		createInfo.clipped = VK_TRUE;
@@ -1035,6 +1086,11 @@ namespace vulkan {
 
 		}
 
+		LIME_VK_LOGCAT ("swapchain create: %ux%u images=%u fmt=%d cs=%d pre=%d cur=%d modes=%u alpha=0x%x clipped=%d sharing=%d",
+			extent.width, extent.height, imageCount, (int)surfaceFormat.format, (int)surfaceFormat.colorSpace,
+			(int)preTransform, (int)capabilities.currentTransform, (unsigned)modeCount,
+			(unsigned)compositeAlpha, (int)createInfo.clipped, (int)createInfo.imageSharingMode);
+
 		VkResult result = dev.CreateSwapchainKHR (state.device, &createInfo, NULL, &state.swapchain);
 
 		if (result != VK_SUCCESS) {
@@ -1045,6 +1101,8 @@ namespace vulkan {
 			return false;
 
 		}
+
+		LIME_VK_LOGCAT ("swapchain created (%d)", (int)result);
 
 		uint32_t swapchainImageCount = 0;
 		dev.GetSwapchainImagesKHR (state.device, state.swapchain, &swapchainImageCount, NULL);
@@ -1100,16 +1158,34 @@ namespace vulkan {
 
 		}
 
+		LIME_VK_LOGCAT ("swapchain images acquired (%u)", state.imageCount);
+
 		if (!CreateRenderTargets ()) return false;
+
+		LIME_VK_LOGCAT ("swapchain render targets ready");
+
 		if (!CreateSyncObjects ()) return false;
+
+		LIME_VK_LOGCAT ("swapchain sync objects ready");
+
+		LIME_VK_LOGCAT ("swapchain: creating the triangle pipeline");
 
 		DestroyTrianglePipeline ();
 		if (!CreateTrianglePipeline ()) return false;
 
+		LIME_VK_LOGCAT ("swapchain: triangle pipeline ready, batch resources next");
+
 		DestroyBatchResources ();
 		if (!CreateBatchResources ()) return false;
 
-		Log ("swapchain %ux%u, %u image(s), %s", extent.width, extent.height, state.imageCount, PresentModeText (presentMode));
+		LIME_VK_LOGCAT ("swapchain: batch resources ready");
+
+		Log ("swapchain %ux%u, %u image(s), %s (requested %dx%d, surface %ux%u, transform %d pre %d of 0x%x, extent range %ux%u..%ux%u)",
+			extent.width, extent.height, state.imageCount, PresentModeText (presentMode),
+			width, height, capabilities.currentExtent.width, capabilities.currentExtent.height,
+			(int)capabilities.currentTransform, (int)preTransform, (unsigned)capabilities.supportedTransforms,
+			capabilities.minImageExtent.width, capabilities.minImageExtent.height,
+			capabilities.maxImageExtent.width, capabilities.maxImageExtent.height);
 		return true;
 
 	}
@@ -1129,6 +1205,8 @@ namespace vulkan {
 
 		state.window = window;
 
+		LIME_VK_LOGCAT ("attach: creating the instance");
+
 		if (!CreateInstance (state.options.enableValidation != 0, state.options.verbose != 0, &state.instance)) {
 
 			DetachDevice ();
@@ -1136,12 +1214,16 @@ namespace vulkan {
 
 		}
 
+		LIME_VK_LOGCAT ("attach: instance created, loading the instance API");
+
 		if (!LoadInstanceApi (state.instance)) {
 
 			DetachDevice ();
 			return false;
 
 		}
+
+		LIME_VK_LOGCAT ("attach: creating the platform surface");
 
 		if (!CreatePlatformSurface (state.instance, window, &state.surface)) {
 
@@ -1152,6 +1234,8 @@ namespace vulkan {
 
 		uint32_t graphicsFamily = 0;
 		uint32_t presentFamily = 0;
+
+		LIME_VK_LOGCAT ("attach: platform surface done, selecting the device");
 
 		if (!SelectPhysicalDevice (state.options.deviceIndex, &graphicsFamily, &presentFamily)) {
 
@@ -1189,6 +1273,8 @@ namespace vulkan {
 		deviceInfo.enabledExtensionCount = 1;
 		deviceInfo.ppEnabledExtensionNames = deviceExtensions;
 
+		LIME_VK_LOGCAT ("attach: device selected, creating the device");
+
 		VkResult result = state.api.CreateDevice (state.physicalDevice, &deviceInfo, NULL, &state.device);
 
 		if (result != VK_SUCCESS) {
@@ -1201,6 +1287,8 @@ namespace vulkan {
 
 		}
 
+		LIME_VK_LOGCAT ("attach: device created, loading the device API");
+
 		if (!LoadDeviceApi (state.device)) {
 
 			DetachDevice ();
@@ -1211,6 +1299,8 @@ namespace vulkan {
 		state.dev.GetDeviceQueue (state.device, graphicsFamily, 0, &state.graphicsQueue);
 		state.dev.GetDeviceQueue (state.device, presentFamily, 0, &state.presentQueue);
 
+		LIME_VK_LOGCAT ("attach: device API loaded, creating program resources");
+
 		// GPU timestamps: optional, and the stats text says so when they are missing.
 		CreatePerfQueries ();
 
@@ -1218,11 +1308,15 @@ namespace vulkan {
 		CreatePipelineCache ();
 
 		// Descriptor layout, pool and the 1x1 white texture are independent of the swapchain and follow the device.
+		LIME_VK_LOGCAT ("attach: perf queries and pipeline cache done");
+
 		if (!CreateProgramResources ()) {
 
 			return false;
 
 		}
+
+		LIME_VK_LOGCAT ("attach: program resources done, creating textures");
 
 		if (!CreateTextureResources ()) {
 
@@ -1231,12 +1325,20 @@ namespace vulkan {
 
 		}
 
+		LIME_VK_LOGCAT ("attach: textures done, creating the swapchain");
+
 		if (withSwapchain && !CreateSwapchain (width, height)) {
 
 			DetachDevice ();
 			return false;
 
 		}
+
+		#if defined(LIME_VULKAN_ANDROID)
+		// The surface this swapchain belongs to is now the applied one: only a *newer*
+		// handle from the activity counts as a change.
+		MarkAndroidWindowApplied (window);
+		#endif
 
 		state.attached = withSwapchain;
 		state.framesPresented = 0;
@@ -1332,6 +1434,83 @@ namespace vulkan {
 
 	}
 
+	#if defined(LIME_VULKAN_ANDROID)
+
+	// Provided by lime's SDL3 window: destroys the EGL surface that keeps the window away
+	// from Vulkan. Weak, because the standalone build has no lime to ask.
+	extern "C" int lime_vulkan_android_release_gl (void) __attribute__ ((weak));
+
+	// A new ANativeWindow: the VkSurfaceKHR belongs to the surface the activity tore down,
+	// so it goes first - a swapchain cannot be created for a surface that is gone.
+	bool RecreateAndroidSurface (void* window) {
+
+		State& state = S ();
+
+		if (state.device == VK_NULL_HANDLE || !state.attached) return false;
+
+		if (!window) {
+
+			SetError ("the Android surface went away; nothing can be presented");
+			return false;
+
+		}
+
+		// Before the size probe: the caller's "is this window minimised" check reads
+		// state.window, and the old handle is exactly the one that no longer exists.
+		state.window = window;
+
+		int width = 0;
+		int height = 0;
+
+		if (!WindowClientSize (window, &width, &height) || width <= 0 || height <= 0) {
+
+			// A resumed activity can report the surface before it is laid out. Not marked
+			// as applied, so the next frame tries again instead of presenting into a
+			// destroyed window.
+			SetError ("the Android window has no client area yet; frame skipped");
+			return false;
+
+		}
+
+		state.dev.DeviceWaitIdle (state.device);
+
+		DestroySwapchain ();
+
+		if (state.surface != VK_NULL_HANDLE && state.api.DestroySurfaceKHR) {
+
+			state.api.DestroySurfaceKHR (state.instance, state.surface, NULL);
+			state.surface = VK_NULL_HANDLE;
+
+		}
+
+		// A resume gives the activity a new Surface, and SDL immediately puts a new EGL
+		// surface on it: the same producer that has to be gone before Vulkan may take the
+		// window. Dropping it here keeps the order right (this runs on the render thread,
+		// right before the surface is needed).
+		if (lime_vulkan_android_release_gl) lime_vulkan_android_release_gl ();
+
+		if (!CreatePlatformSurface (state.instance, window, &state.surface)) return false;
+
+		state.extent.width = (uint32_t)width;
+		state.extent.height = (uint32_t)height;
+
+		if (!CreateSwapchain (width, height)) {
+
+			state.swapchain = VK_NULL_HANDLE;
+			return false;
+
+		}
+
+		state.resized = false;
+		MarkAndroidWindowApplied (window);
+
+		Log ("Android surface rebuilt for a new window (%dx%d)", width, height);
+		return true;
+
+	}
+
+	#endif
+
 	// ---------------------------------------------------------------------
 
 	// A frame is three steps (BeginFrame, draws, EndFrame); PresentFrame is only the
@@ -1341,6 +1520,8 @@ namespace vulkan {
 
 		State& state = S ();
 		DeviceApi& dev = state.dev;
+
+		double beginTotalStart = PerfNow ();
 
 		if (state.inFrame) {
 
@@ -1355,6 +1536,26 @@ namespace vulkan {
 			return false;
 
 		}
+
+		#if defined(LIME_VULKAN_ANDROID)
+
+		// The activity recreated its surface (resume, rotation, split screen, a permission
+		// dialog). The swapchain of the old ANativeWindow cannot present any more, and the
+		// new handle arrives from the Java/SDL thread, so it is taken here - at a frame
+		// boundary, on the render thread - and the surface is rebuilt before any draw.
+		void* changedWindow = NULL;
+
+		if (TakeChangedAndroidWindow (&changedWindow)) {
+
+			// RecreateAndroidSurface points state.window at the new handle even when the
+			// rebuild has to wait for a client area, so the failure below is reported the
+			// same way a minimised window is: the frame is skipped, the renderer stays
+			// attached, and the next frame retries.
+			if (!RecreateAndroidSurface (changedWindow)) return false;
+
+		}
+
+		#endif
 
 		if (state.resized) {
 
@@ -1390,8 +1591,12 @@ namespace vulkan {
 
 		}
 
+		PerfResetFrame ();
+
 		VkFence fence = state.inFlight[state.frameIndex];
+		double waitStart = PerfNow ();
 		VkResult fenceResult = dev.WaitForFences (state.device, 1, &fence, VK_TRUE, UINT64_MAX);
+		state.waits.fence = (float)((PerfNow () - waitStart) * 1000.0);
 
 		if (fenceResult != VK_SUCCESS) {
 
@@ -1414,17 +1619,25 @@ namespace vulkan {
 		// uniform ring buffer.
 		ResetProgramFrameState ();
 
+		// Same reasoning for the upload channel: this slot's staging ring and command
+		// buffer are only rewritable once the frame that last used them finished, and
+		// this fence is that proof. Nothing waits for an upload inside a frame.
+		BeginUploadFrame ();
+
 		// Textures retired long enough are really freed here. Releasing them anywhere
 		// else is unsafe, since a descriptor set may still be referenced by a
 		// submitted command and that costs the device.
 		DrainRetiredTextures ();
 
 		uint32_t imageIndex = 0;
+		double acquireStart = PerfNow ();
 		VkResult acquire = dev.AcquireNextImageKHR (state.device, state.swapchain, UINT64_MAX,
 			state.imageAvailable[state.frameIndex], VK_NULL_HANDLE, &imageIndex);
+		state.waits.acquire = (float)((PerfNow () - acquireStart) * 1000.0);
 
 		if (acquire == VK_ERROR_OUT_OF_DATE_KHR) {
 
+			state.swapchainRebuilds++;
 			RecreateSwapchain ();
 			return true;
 
@@ -1481,6 +1694,8 @@ namespace vulkan {
 		state.frameCommandBuffer = commandBuffer;
 		state.inFrame = true;
 
+		state.waits.beginTotal = (float)((PerfNow () - beginTotalStart) * 1000.0);
+
 		return true;
 
 	}
@@ -1490,6 +1705,8 @@ namespace vulkan {
 
 		State& state = S ();
 		DeviceApi& dev = state.dev;
+
+		double endTotalStart = PerfNow ();
 
 		if (!state.inFrame) {
 
@@ -1506,7 +1723,9 @@ namespace vulkan {
 
 		// Close whichever pass the batch left open. A frame that drew nothing still
 		// has to clear the window, so the pass is opened once and closed again.
+		double endPassStart = PerfNow ();
 		EndActivePass ();
+		state.waits.endPass = (float)((PerfNow () - endPassStart) * 1000.0);
 
 		if (!state.surfacePassCleared) {
 
@@ -1532,40 +1751,44 @@ namespace vulkan {
 		presentBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 		presentBarrier.dstAccessMask = 0;
 
+		double presentBarrierStart = PerfNow ();
+
 		dev.CmdPipelineBarrier (commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 			VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, NULL, 0, NULL, 1, &presentBarrier);
 
+		state.waits.presentBarrier = (float)((PerfNow () - presentBarrierStart) * 1000.0);
+
 		state.inFrame = false;
 
+		double timestampStart = PerfNow ();
 		PerfEndFrame (commandBuffer, state.frameIndex);
+		state.waits.timestamp = (float)((PerfNow () - timestampStart) * 1000.0);
 
-		if (dev.EndCommandBuffer (commandBuffer) != VK_SUCCESS) {
+		double endBufferStart = PerfNow ();
+		VkResult endBufferResult = dev.EndCommandBuffer (commandBuffer);
+		state.waits.endBuffer = (float)((PerfNow () - endBufferStart) * 1000.0);
+
+		if (endBufferResult != VK_SUCCESS) {
 
 			SetError ("vkEndCommandBuffer failed");
 			return false;
 
 		}
 
-		// Everything queued by texture creation or update is recorded into one
-		// command buffer here. The frame waits for it on the GPU instead of the CPU
-		// waiting for the copy, so a frame that uploads still submits immediately.
-		VkSemaphore uploadSemaphore = FlushTextureUploads ();
+		// Everything queued by texture creation or update goes out as one submit
+		// ahead of this frame's commands: same queue, so the finished copies are
+		// visible to the draws below through the barrier at the end of that buffer.
+		// No semaphore and no fence: the frame's own fence already covers it, and
+		// waiting for the copy here is what kept the CPU a whole frame behind.
+		FlushTextureUploads (true);
 
-		VkSemaphore waitSemaphores[2];
-		VkPipelineStageFlags waitStages[2];
+		VkSemaphore waitSemaphores[1];
+		VkPipelineStageFlags waitStages[1];
 		uint32_t waitCount = 0;
 
 		waitSemaphores[waitCount] = state.imageAvailable[state.frameIndex];
 		waitStages[waitCount] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 		waitCount++;
-
-		if (uploadSemaphore != VK_NULL_HANDLE) {
-
-			waitSemaphores[waitCount] = uploadSemaphore;
-			waitStages[waitCount] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-			waitCount++;
-
-		}
 
 		VkSubmitInfo submitInfo = {};
 		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1577,12 +1800,9 @@ namespace vulkan {
 		submitInfo.signalSemaphoreCount = 1;
 		submitInfo.pSignalSemaphores = &state.renderFinished[imageIndex];
 
+		double submitStart = PerfNow ();
 		VkResult submitResult = dev.QueueSubmit (state.graphicsQueue, 1, &submitInfo, fence);
-
-		// The upload semaphore is either consumed by this submit or handed back:
-		// a binary semaphore cannot be signalled twice without a wait, and the
-		// failure path below is exactly where a waiter goes missing.
-		UploadSemaphoreHandled (submitResult == VK_SUCCESS);
+		state.waits.submit = (float)((PerfNow () - submitStart) * 1000.0);
 
 		if (submitResult != VK_SUCCESS) {
 
@@ -1601,11 +1821,38 @@ namespace vulkan {
 		presentInfo.pSwapchains = &state.swapchain;
 		presentInfo.pImageIndices = &imageIndex;
 
+		double presentStart = PerfNow ();
 		VkResult present = dev.QueuePresentKHR (state.presentQueue, &presentInfo);
+		state.waits.present = (float)((PerfNow () - presentStart) * 1000.0);
 
-		if (present == VK_ERROR_OUT_OF_DATE_KHR || present == VK_SUBOPTIMAL_KHR) {
+		if (present == VK_ERROR_OUT_OF_DATE_KHR) {
 
+			state.swapchainRebuilds++;
 			RecreateSwapchain ();
+
+		} else if (present == VK_SUBOPTIMAL_KHR) {
+
+			// Advisory, and on Android the driver reports it forever once the
+			// swapchain is pre-rotated by us (that is what IDENTITY preTransform
+			// means here: the display transform is applied at composition time).
+			// Rebuilding on it was a full swapchain - nine images, nine
+			// framebuffers, vkDeviceWaitIdle - on every single frame, which is
+			// what made the game run at 33 fps on a Mali-G610 while OpenGL ran at
+			// 120. A real change of window size still rebuilds.
+			state.presentSuboptimal++;
+
+			int windowWidth = 0;
+			int windowHeight = 0;
+
+			if (state.window != NULL
+				&& WindowClientSize (state.window, &windowWidth, &windowHeight)
+				&& windowWidth > 0 && windowHeight > 0
+				&& ((uint32_t)windowWidth != state.extent.width || (uint32_t)windowHeight != state.extent.height)) {
+
+				state.swapchainRebuilds++;
+				RecreateSwapchain ();
+
+			}
 
 		} else if (present != VK_SUCCESS) {
 
@@ -1619,6 +1866,8 @@ namespace vulkan {
 		// The CPU half of this frame's sample; the GPU half arrives when the slot is
 		// reused two frames from now.
 		PerfCloseFrame (state.frameIndex);
+
+		state.waits.endTotal = (float)((PerfNow () - endTotalStart) * 1000.0);
 
 		state.frameIndex = (state.frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
 		state.framesPresented++;

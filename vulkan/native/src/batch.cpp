@@ -219,6 +219,8 @@ namespace vulkan {
 
 		batch.vertexCapacity = 0;
 
+		LIME_VK_LOGCAT ("batch: allocating %u vertices", vertexCapacity);
+
 		VkDeviceSize vertexBytes = (VkDeviceSize)vertexCapacity * sizeof (lime_vulkan_vertex);
 
 		for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
@@ -382,6 +384,9 @@ namespace vulkan {
 		DeviceApi& dev = state.dev;
 		Batch& batch = state.batch;
 
+		LIME_VK_LOGCAT ("batch: pipeline %d, vertex spirv %u bytes, fragment %u bytes",
+			blend, (unsigned)sizeof (kQuadVertexSpirv), (unsigned)sizeof (kQuadFragmentSpirv));
+
 		VkShaderModuleCreateInfo moduleInfo = {};
 		moduleInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
 
@@ -523,7 +528,12 @@ namespace vulkan {
 		pipelineInfo.renderPass = state.renderPass;
 		pipelineInfo.subpass = 0;
 
+		LIME_VK_LOGCAT ("batch: pipeline %d compiling (cache=%p renderPass=%p layout=%p)", blend,
+			(void*)state.pipelineCache, (void*)state.renderPass, (void*)batch.layout);
+
 		VkResult result = dev.CreateGraphicsPipelines (state.device, state.pipelineCache, 1, &pipelineInfo, NULL, pipeline);
+
+		LIME_VK_LOGCAT ("batch: pipeline %d result %d", blend, (int)result);
 
 		dev.DestroyShaderModule (state.device, vertexModule, NULL);
 		dev.DestroyShaderModule (state.device, fragmentModule, NULL);
@@ -549,7 +559,11 @@ namespace vulkan {
 
 			uint32_t initial = MAX_QUADS_PER_FLUSH * 4;
 
+			LIME_VK_LOGCAT ("batch: creating host buffers");
+
 			if (!AllocateBatchBuffers (initial)) return false;
+
+			LIME_VK_LOGCAT ("batch: host buffers ready");
 
 		}
 
@@ -596,6 +610,11 @@ namespace vulkan {
 		DeviceApi& dev = state.dev;
 		Batch& batch = state.batch;
 
+		LIME_VK_LOGCAT ("batch destroy: device=%p pipelines0=%p layout=%p vb0=%p mem0=%p map0=%p ib=%p imem=%p",
+			(void*)state.device, (void*)batch.pipelines[0], (void*)batch.layout,
+			(void*)batch.vertexBuffer[0], (void*)batch.vertexMemory[0], batch.vertexMapped[0],
+			(void*)batch.indexBuffer, (void*)batch.indexMemory);
+
 		if (state.device != VK_NULL_HANDLE) {
 
 			for (int i = 0; i < BLEND_COUNT; ++i) {
@@ -609,6 +628,8 @@ namespace vulkan {
 
 			}
 
+			LIME_VK_LOGCAT ("batch destroy: pipelines gone");
+
 			if (batch.layout != VK_NULL_HANDLE) {
 
 				dev.DestroyPipelineLayout (state.device, batch.layout, NULL);
@@ -616,13 +637,19 @@ namespace vulkan {
 
 			}
 
+			LIME_VK_LOGCAT ("batch destroy: layout gone");
+
 			for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
 
 				DestroyHostBuffer (&batch.vertexBuffer[i], &batch.vertexMemory[i], &batch.vertexMapped[i]);
 
 			}
 
+			LIME_VK_LOGCAT ("batch destroy: vertex buffers gone");
+
 			DestroyHostBuffer (&batch.indexBuffer, &batch.indexMemory, 0);
+
+			LIME_VK_LOGCAT ("batch destroy: index buffer gone");
 
 		}
 
@@ -630,6 +657,8 @@ namespace vulkan {
 		batch.indexCapacity = 0;
 		batch.verticesWritten = 0;
 		batch.batchFirstVertex = 0;
+
+		LIME_VK_LOGCAT ("batch destroy slot0=%p slot1=%p frame=%u", batch.vertexMapped[0], batch.vertexMapped[1], (unsigned)state.frameIndex);
 		batch.segmentQuads = 0;
 		batch.segmentIndexed = true;
 		batch.recording = false;
@@ -751,7 +780,11 @@ namespace vulkan {
 		info.clearValueCount = 1;
 		info.pClearValues = &clearValue;
 
+		double beginPassStart = PerfNow ();
+
 		dev.CmdBeginRenderPass (commandBuffer, &info, VK_SUBPASS_CONTENTS_INLINE);
+
+		state.waits.beginPass = (float)((PerfNow () - beginPassStart) * 1000.0);
 
 		SetPassViewport (commandBuffer, (int)state.extent.width, (int)state.extent.height);
 
@@ -935,6 +968,8 @@ namespace vulkan {
 		State& state = S ();
 		Batch& batch = state.batch;
 
+		double flushStart = PerfNow ();
+
 		if (!batch.recording) return;
 
 		uint32_t vertexCount = batch.verticesWritten - batch.batchFirstVertex;
@@ -1063,6 +1098,8 @@ namespace vulkan {
 		batch.drawnVertices += vertexCount;
 		batch.batchFirstVertex = batch.verticesWritten;
 		batch.segmentQuads = 0;
+
+		state.waits.batchSubmit += (float)((PerfNow () - flushStart) * 1000.0);
 
 	}
 

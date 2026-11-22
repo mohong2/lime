@@ -29,6 +29,21 @@
 
 #include "glsl.h"
 
+#if defined(LIME_VULKAN_ANDROID)
+#include <android/log.h>
+// On the phone there is no console: logcat is the only place a diagnostic can land,
+// and it survives a fatal signal (unlike a crash report written after the fact).
+// Silent unless the build asks for it (-DSEIUN_VULKAN_TRACE): a driver that crashes
+// inside itself needs a trace, but a shipped game does not want one every frame.
+#if defined(SEIUN_VULKAN_TRACE)
+#define LIME_VK_LOGCAT(...) __android_log_print (ANDROID_LOG_INFO, "lime-vk", __VA_ARGS__)
+#else
+#define LIME_VK_LOGCAT(...) ((void)0)
+#endif
+#else
+#define LIME_VK_LOGCAT(...) ((void)0)
+#endif
+
 #include <cstdarg>
 #include <cstdio>
 #include <cstdint>
@@ -432,6 +447,17 @@ namespace vulkan {
 		uint32_t frameIndex;
 		uint32_t imageCount;
 
+		// Surface capabilities at the last swapchain build. Android reports the
+		// swapchain in the panel's native orientation and asks the presentation
+		// engine to rotate it (currentTransform), which is not the orientation the
+		// engine renders in; these are kept so the status file can show both sides.
+		VkSurfaceTransformFlagBitsKHR surfaceTransform;
+		VkSurfaceTransformFlagBitsKHR surfacePreTransform;
+		VkSurfaceTransformFlagsKHR surfaceTransforms;
+		VkExtent2D surfaceExtent;
+		VkExtent2D surfaceMinExtent;
+		VkExtent2D surfaceMaxExtent;
+
 		bool attached;
 		bool resized;
 		bool dialogEnabled;
@@ -510,6 +536,45 @@ namespace vulkan {
 		std::string lastError;
 		std::string fallbackReason;
 
+		/** Swapchain maintenance counters: how often the driver asked for a rebuild
+		 *  and how often one was really done. */
+		uint32_t presentSuboptimal;
+		uint32_t swapchainRebuilds;
+
+		/** Which wait the frame is actually blocked on, in milliseconds, reset at
+		 *  the start of every BeginFrame.
+		 *
+		 *  Declared as the very last member on purpose: the Android build does not
+		 *  track header dependencies, and a field inserted anywhere else moves the
+		 *  offset of every member after it. An object nobody recompiled would then
+		 *  read a different member - which is exactly how the batch crash of
+		 *  November 22 was produced. Growing at the end keeps every existing offset. */
+		struct FrameWaits {
+			float fence;       /**< waiting for this slot's frame fence */
+			float acquire;     /**< vkAcquireNextImageKHR */
+			float submit;      /**< vkQueueSubmit of the frame */
+			float present;     /**< vkQueuePresentKHR */
+			float staging;     /**< waiting for the upload fence before writing staging */
+			float uploadDrain; /**< waiting for the previous frame before an update copy */
+			float uploadFlush; /**< waiting for the upload channel before recording */
+			float uploadQueue; /**< recording and submitting the upload batch */
+			float beginTotal;  /**< whole BeginFrame */
+			float endTotal;    /**< whole EndFrame */
+			float batchSubmit; /**< FlushBatch: bind state and record the draw */
+			float beginPass;   /**< vkCmdBeginRenderPass */
+			float endPass;     /**< vkCmdEndRenderPass */
+			float endBuffer;   /**< vkEndCommandBuffer */
+			float presentBarrier; /**< the layout transition to PRESENT_SRC */
+			float timestamp;   /**< vkCmdWriteTimestamp of the frame end */
+
+			FrameWaits () : fence (0.0f), acquire (0.0f), submit (0.0f), present (0.0f),
+				staging (0.0f), uploadDrain (0.0f), uploadFlush (0.0f), uploadQueue (0.0f),
+				beginTotal (0.0f), endTotal (0.0f), batchSubmit (0.0f), beginPass (0.0f),
+				endPass (0.0f), endBuffer (0.0f), presentBarrier (0.0f), timestamp (0.0f) {}
+		};
+
+		FrameWaits waits;
+
 		State ();
 
 	};
@@ -548,6 +613,23 @@ namespace vulkan {
 	void* SelfWindow ();
 	/** Android: the ANativeWindow the host handed over; a no-op elsewhere. */
 	void SetAndroidWindow (void* window);
+
+	#if defined(LIME_VULKAN_ANDROID)
+
+	/**
+	 * Android surface lifecycle.
+	 *
+	 * The activity's ANativeWindow is destroyed and recreated on every resume, rotation
+	 * and split-screen change, and the call arrives on the Java/SDL thread. Swapping the
+	 * swapchain there would tear down a frame the render thread is still submitting, so
+	 * SetAndroidWindow() only records the handle: the render thread picks the change up
+	 * in BeginFrame() and rebuilds the surface from it (RecreateAndroidSurface).
+	 */
+	void MarkAndroidWindowApplied (void* window);
+	bool TakeChangedAndroidWindow (void** window);
+	bool RecreateAndroidSurface (void* window);
+
+	#endif
 	bool WindowClientSize (void* window, int* width, int* height);
 	int WindowTitle (void* window, char* out, int capacity);
 	int SuspendProcess (unsigned int pid);
@@ -590,6 +672,8 @@ namespace vulkan {
 	void PerfCloseFrame (uint32_t slot);
 	/** Called once a slot fence signalled: pairs the CPU half with the GPU timestamps. */
 	void PerfCollectFrame (uint32_t slot);
+	/** Zeroes the per-wait split of the frame that is about to open. */
+	void PerfResetFrame ();
 	/** Appends the percentile block to the stats text. Returns the number of bytes written. */
 	int PerfText (char* out, int capacity);
 	double PerfNow ();
@@ -622,13 +706,17 @@ namespace vulkan {
 	uint64_t CreateTexture (const void* rgba, int width, int height, int flags);
 	int UpdateTexture (uint64_t handle, const void* rgba, int flags);
 
-	/** Records and submits every queued upload; returns the semaphore the frame
-	 *  submit has to wait on, or VK_NULL_HANDLE when nothing was queued. */
-	VkSemaphore FlushTextureUploads ();
-	/** Reports what happened to the semaphore FlushTextureUploads returned. A
-	 *  binary semaphore that is signalled twice is an error, so a waiter that was
-	 *  never submitted has to be taken back here. */
-	void UploadSemaphoreHandled (bool waited);
+	/** Records every queued upload into the current frame slot's upload command
+	 *  buffer and submits it on the graphics queue, ahead of the frame's own
+	 *  commands. Nothing is waited for: the queue order plus the barrier at the end
+	 *  of that buffer is what makes the pixels visible to this frame's draws.
+	 *  Outside a frame the submit is waited for, so a loader handing textures over
+	 *  never returns before the copy landed. */
+	bool FlushTextureUploads (bool haveFrame);
+	/** Marks the current frame slot's staging ring writable again. Called from
+	 *  BeginFrame right after its fence wait, which is what proves the GPU is done
+	 *  with the ring. */
+	void BeginUploadFrame ();
 	void DestroyTexture (uint64_t handle);
 	uint64_t WhiteTexture ();
 
