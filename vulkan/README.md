@@ -1,10 +1,11 @@
 # Vulkan renderer
 
 A Vulkan renderer for OpenFL and flixel, part of Lime. Windows x64 and Linux x64
-are complete (Win32 and X11 surfaces). Android carries the same library code, the
-`ANativeWindow` surface entry point and `lime_vulkan_set_android_window()` to hand
-the window over, but nothing calls that yet, so an Android session still falls
-back to OpenGL.
+are complete (Win32 and X11 surfaces). Android carries the same library code plus the
+`ANativeWindow` surface: lime's SDL3 Android window registers its handle through
+`lime_vulkan_set_android_window()` and re-registers it after the activity recreates
+the surface, so the renderer can attach there like on the other platforms (see
+"Android" under Integration).
 
 The renderer takes over the drawing that OpenFL and flixel would normally send to
 OpenGL: quad batches become one Vulkan draw per batch, camera filters become a
@@ -90,11 +91,82 @@ gate, because it compiles and links each platform for real.
 3. Call `VkRuntime.start()` once the stage exists, install `VkStageRenderer`
    through `VkOverlay.install()`, and call `VkRuntime.endFrame()` from the window
    render callback.
-4. Android only: nothing there can find the game window, so hand it over with
-   `lime_vulkan_set_android_window()` — the pointer is the one SDL3 exposes as
-   `SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER` (or the Surface from the Java glue).
-   Call it again after the surface is re-created, and pass `NULL` when it goes
-   away: a stale `ANativeWindow` is worse than a fallback.
+4. Android only: nothing there can find the game window, so it has to be handed over
+   with `lime_vulkan_set_android_window()` — the pointer is the one SDL3 exposes as
+   `SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER`. **Lime does this itself** now
+   (`src/backend/sdl3/SDLWindow.cpp`): the handle is registered when the window is
+   created, re-registered by an SDL event watch after the activity recreates the
+   surface (resume, rotation, split screen), and set to `NULL` when the window goes
+   away — a stale `ANativeWindow` is worse than a fallback. An application only has
+   to start the runtime, as on every other platform.
+
+### Android
+
+The window handle is the only part Android needs from the host; the rest of the
+sequence is the same as on Windows. Two details are worth knowing:
+
+* The renderer picks the new handle up at a **frame boundary** on the render thread
+  (`TakeChangedAndroidWindow` in `BeginFrame`), never from the event callback: the
+  activity posts its surface change on the Java thread, and rebuilding a swapchain
+  there would tear down a frame that is still in flight. The old `VkSurfaceKHR` is
+  destroyed and rebuilt for the new window (`RecreateAndroidSurface`).
+* If the new surface has no client area yet, the frame is skipped instead of being
+  turned into a failure, exactly like a minimised window on the desktop.
+* The swapchain is built with `VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR`, not with the
+  surface's `currentTransform`. A landscape game on a portrait panel gets
+  `currentTransform = ROTATE_90`, and asking for that makes the compositor rotate an
+  image the engine already drew upright: the game fills the screen sideways and
+  squeezed (seen on a Mali-G610, reported as "portrait aspect ratio"). Identity is
+  what every other platform implies, and the presentation engine maps the image 1:1
+  onto the window. The extent stays `currentExtent`, so the viewport, the projection
+  and the scissor all keep using the size lime reports.
+
+### Frames per second: what not to wait for
+
+Two traps cost this renderer a factor of four on a Mali-G610 and neither shows up
+as a slow call in a profiler:
+
+* **`VK_SUBOPTIMAL_KHR` from `vkQueuePresentKHR` is advisory.** The renderer used
+  to rebuild the whole swapchain on it - `vkDeviceWaitIdle`, nine swapchain images,
+  nine framebuffers and all the sync objects - which took 26 ms and made the game
+  run at 33 fps. Because the Android swapchain is pre-rotated by the engine
+  (identity `preTransform`, see above), the driver there answers SUBOPTIMAL on
+  *every* present, so that branch ran on *every* frame. It now only rebuilds when
+  the window size really changed, which is the only thing SUBOPTIMAL can mean here:
+  rotation arrives as a new `ANativeWindow`, a resize sets `state.resized`.
+* **The upload channel used to be a single slot.** Recording the next batch waited
+  for the previous upload's fence and for the previous frame's fence, so the CPU
+  could never run ahead of the GPU. It is now one channel per frame in flight: the
+  copies are submitted on the graphics queue immediately before the frame's own
+  commands, and the barrier at the end of the upload buffer is what orders them
+  against that frame's draws. Inside a frame nothing waits; only an upload queued
+  with no frame open (a loader) waits for its fence.
+
+The stats text (`lime_vulkan_batch_stats`) reports both: `swapchainRebuilds`,
+`suboptimal`, and a split of the frame into the waits it is blocked on
+(`tFence`, `tAcquire`, `tSubmit`, `tPresent`, `tBegin`, `tEnd`, `tBatch`,
+`tBeginPass`, `tEndPass`, `tEndBuffer`, `tUpload*`). A frame that takes 30 ms while
+every one of those is under 1 ms means the time is in a driver call that is not
+being measured - which is how the swapchain rebuild above was found.
+
+### Rebuilding after a header change
+
+Lime's Android build recompiles a source file when that `.cpp` is newer than its
+object, and it does **not** track header dependencies. Editing `native/src/internal.h`
+(the `State` layout lives there, and every translation unit indexes it) therefore
+leaves some objects compiled against the old layout: the process then reads and
+writes the wrong fields, which surfaces as unrelated crashes (a null vertex buffer
+here, a SIGSEGV inside the driver there). After touching a header, delete that
+target's objects first:
+
+```powershell
+Get-ChildItem .haxelib/lime/git/project/obj/androidarm64-sdl3-64 -Filter "c42a0508_*.obj" | Remove-Item -Force
+haxelib run lime rebuild android -arm64
+```
+
+The `c42a0508_` prefix is the hash lime gives `vulkan/native/src`; `lime rebuild`
+lists the files it recompiled, and that list is the check that the objects match the
+header.
 
 ## Runtime flags
 
@@ -116,6 +188,12 @@ gate, because it compiles and links each platform for real.
 | `--vulkan-texstats` | Report texture coverage. |
 | `--vulkan-texdump` | Dump uploaded textures to `logs/texdump`. |
 
+Build-time probes, off unless the define is passed:
+
+| Define | Effect |
+|---|---|
+| `-D seiun_vulkan_perf` | Write `logs/vulkan-perf.txt` every 300 frames: the stats text plus the frame split, the per-frame texture updates by size, and the Haxe side of the frame (`submitMs`, `overlayWalkMs`). This is what found the swapchain rebuild; on the phone it is the only way to see the numbers, because a release build has no console. |
+
 ## Status
 
 Supported today: quad batches, colour transform, palette textures, camera
@@ -125,10 +203,10 @@ into a sprite.
 
 Platform layer: Win32 finds the largest visible window of the process, X11 walks
 the tree for the window whose `_NET_WM_PID` is this process, and both create and
-size the surface from it. Android cannot enumerate windows: the host passes the
-`ANativeWindow` to `lime_vulkan_set_android_window()`, and until it does the
-backend reports "unavailable" instead of guessing. Wayland is not covered (X11
-only).
+size the surface from it. Android cannot enumerate windows, so lime's SDL3 window
+passes the `ANativeWindow` to `lime_vulkan_set_android_window()` and keeps it
+current across surface recreation; with no registered handle the backend reports
+"unavailable" instead of guessing. Wayland is not covered (X11 only).
 
 Not implemented yet: glow, drop shadow and displacement map filters; the
 triangle path; offscreen render textures; macOS and iOS (no Vulkan driver, and
