@@ -330,40 +330,130 @@ namespace vulkan {
 
 	static std::vector<PendingUpload> s_pending;
 
-	// One upload slot, not a ring: the staging ring below is the serialization
-	// point, so two command buffers could never overlap anyway. A ring only pays
-	// off together with per-slot staging and a transfer queue.
+	/**
+	 * One upload channel per frame in flight: its own command buffer, its own
+	 * staging ring, and a 'ready' flag that says the frame which last used it has
+	 * finished.
+	 *
+	 * The previous design had a single channel and waited for its fence - and for
+	 * the previous frame's fence - before recording the next batch. Both waits sat
+	 * in the middle of the frame, which is the one place the CPU must not stop:
+	 * "the previous frame has finished" is exactly the pipeline it is supposed to
+	 * run ahead of. On a device whose driver reports its uploads slowly (or a
+	 * phone whose writes to external storage stall a frame), that wait is several
+	 * milliseconds spent doing nothing.
+	 *
+	 * It was not the cause of the 33 fps of November 22 - that was the swapchain
+	 * being rebuilt on every present (see the SUBOPTIMAL note in device.cpp) - but
+	 * it is the same class of mistake and it showed up in the stats as one wait per
+	 * frame.
+	 *
+	 * With two slots, the fence BeginFrame already waits for is all the
+	 * synchronization this path needs, and the copies are submitted on the same
+	 * queue immediately before the frame's own commands, so the pipeline barrier at
+	 * the end of the upload buffer orders them against that frame's draws.
+	 */
+	struct UploadSlot {
+
+		VkCommandBuffer commandBuffer;
+		VkBuffer staging;
+		VkDeviceMemory stagingMemory;
+		void* mapped;
+		VkDeviceSize size;
+		VkDeviceSize used;
+		/** True once the frame that last used this slot finished, so the ring can be
+		 *  overwritten. Set by BeginFrame right after its fence wait. */
+		bool ready;
+
+		UploadSlot () :
+			commandBuffer (VK_NULL_HANDLE),
+			staging (VK_NULL_HANDLE),
+			stagingMemory (VK_NULL_HANDLE),
+			mapped (NULL),
+			size (0),
+			used (0),
+			ready (true) {}
+
+	};
+
+	static UploadSlot s_slots[MAX_FRAMES_IN_FLIGHT];
+
 	static VkCommandPool s_uploadPool = VK_NULL_HANDLE;
-	static VkCommandBuffer s_uploadBuffer = VK_NULL_HANDLE;
+	/** Only used by the synchronous path: an upload queued with no frame open (a
+	 *  loader handing textures over) has nothing else to tell it the copy landed. */
 	static VkFence s_uploadFence = VK_NULL_HANDLE;
-	static VkSemaphore s_uploadSemaphore = VK_NULL_HANDLE;
-	static bool s_uploadInFlight = false;
-	/** The semaphore was signalled but the submit that waits on it has not
-	 *  happened yet. Signalling it twice without a wait in between is a device
-	 *  error, so every path that walks away has to hand it back. */
-	static bool s_uploadSemaphorePending = false;
 	/** Fence waits give up instead of blocking forever: a hung copy would
 	 *  otherwise freeze the loader with no message at all. */
 	static const uint64_t kUploadTimeoutNs = 5000000000ull;
 
-	static VkBuffer s_staging = VK_NULL_HANDLE;
-	static VkDeviceMemory s_stagingMemory = VK_NULL_HANDLE;
-	static void* s_stagingMapped = NULL;
-	static VkDeviceSize s_stagingSize = 0;
-	static VkDeviceSize s_stagingUsed = 0;
-	static bool s_burstClosed = true;
+	/** The channel the current frame records into. */
+	static int UploadSlotIndex () {
+
+		uint32_t index = S ().frameIndex;
+
+		return index < (uint32_t)MAX_FRAMES_IN_FLIGHT ? (int)index : 0;
+
+	}
+
+	/** Called from BeginFrame once this slot's fence signalled: the ring is free. */
+	void BeginUploadFrame () {
+
+		UploadSlot& slot = s_slots[UploadSlotIndex ()];
+
+		// Rewind only when nothing is still queued: an upload made outside a frame
+		// (the loader hands textures over before the first draw) owns the bytes at
+		// the bottom of this ring until the next flush picks them up, and rewinding
+		// would let the next allocation overwrite them.
+		if (s_pending.empty ()) slot.used = 0;
+
+		slot.ready = true;
+
+	}
+
+	/** True once nothing is reading this slot's ring any more. Outside a frame the
+	 *  frame fence has to be waited for; inside one BeginFrame already did it. */
+	static bool SlotReady (int index) {
+
+		State& state = S ();
+
+		UploadSlot& slot = s_slots[index];
+
+		if (slot.ready) return true;
+
+		if (state.device != VK_NULL_HANDLE && (size_t)index < state.inFlight.size ()
+			&& state.inFlight[index] != VK_NULL_HANDLE) {
+
+			VkResult result = state.dev.WaitForFences (state.device, 1, &state.inFlight[index], VK_TRUE, kUploadTimeoutNs);
+
+			if (result != VK_SUCCESS) {
+
+				state.upload.failures++;
+
+				std::string message = "vkWaitForFences(upload slot) failed: ";
+				message += ResultText (result);
+				SetError (message.c_str ());
+				return false;
+
+			}
+
+		}
+
+		slot.used = 0;
+		slot.ready = true;
+
+		return true;
+
+	}
 
 	// Uploads copy through a ring buffer that lives in host visible memory, which
 	// is plain RAM. It is kept small on purpose: a ring sized for a whole burst
-	// parks hundreds of megabytes there for the rest of the session.
+	// parks hundreds of megabytes there for the rest of the session. One ring per
+	// frame slot, so two frames of uploads can be in flight at once.
 	static const VkDeviceSize kStagingRing = 8u << 20;
 
-	// Granularity when a single image does not fit into the ring.
-	static const VkDeviceSize kStagingStep = 4u << 20;
-
-	static bool WaitUploads (const char* where);
-	static VkSemaphore FlushPendingUploads (bool signal);
-	static void ReleaseStaging ();
+	static bool FlushPendingUploads (bool synchronous);
+	static void ReleaseStaging (int index);
+	static void ReleaseAllStaging ();
 
 	static std::map<uint64_t, VkSampler> s_samplers;
 
@@ -377,19 +467,20 @@ namespace vulkan {
 		if (state.device != VK_NULL_HANDLE) {
 
 			if (s_uploadFence != VK_NULL_HANDLE) dev.DestroyFence (state.device, s_uploadFence, NULL);
-			if (s_uploadSemaphore != VK_NULL_HANDLE) dev.DestroySemaphore (state.device, s_uploadSemaphore, NULL);
-			// Destroying the pool frees the command buffer allocated from it.
+			// Destroying the pool frees the command buffers allocated from it.
 			if (s_uploadPool != VK_NULL_HANDLE) dev.DestroyCommandPool (state.device, s_uploadPool, NULL);
 
 		}
 
+		for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+
+			s_slots[i].commandBuffer = VK_NULL_HANDLE;
+			s_slots[i].ready = true;
+
+		}
+
 		s_uploadPool = VK_NULL_HANDLE;
-		s_uploadBuffer = VK_NULL_HANDLE;
 		s_uploadFence = VK_NULL_HANDLE;
-		s_uploadSemaphore = VK_NULL_HANDLE;
-		s_uploadInFlight = false;
-		s_uploadSemaphorePending = false;
-		s_burstClosed = true;
 
 	}
 
@@ -400,13 +491,20 @@ namespace vulkan {
 
 		if (state.device == VK_NULL_HANDLE) return false;
 
+		bool complete = s_uploadPool != VK_NULL_HANDLE && s_uploadFence != VK_NULL_HANDLE;
+
+		for (int i = 0; complete && i < MAX_FRAMES_IN_FLIGHT; ++i) {
+
+			if (s_slots[i].commandBuffer == VK_NULL_HANDLE) complete = false;
+
+		}
+
 		// Every handle or none: a half created channel used to leave the pool
 		// alive with a null fence, and the next flush re-used a stale handle.
-		if (s_uploadPool != VK_NULL_HANDLE && s_uploadBuffer != VK_NULL_HANDLE
-			&& s_uploadFence != VK_NULL_HANDLE && s_uploadSemaphore != VK_NULL_HANDLE) return true;
+		if (complete) return true;
 
-		if (s_uploadInFlight) WaitUploads ("recreate");
-
+		// The device is idle here in every path that gets this far (a rebuild waits
+		// before touching the channel), so the old objects can go as a unit.
 		ReleaseUpload ();
 
 		VkCommandPoolCreateInfo poolInfo = {};
@@ -427,12 +525,21 @@ namespace vulkan {
 		allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 		allocateInfo.commandPool = s_uploadPool;
 		allocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-		allocateInfo.commandBufferCount = 1;
+		allocateInfo.commandBufferCount = MAX_FRAMES_IN_FLIGHT;
 
-		if (dev.AllocateCommandBuffers (state.device, &allocateInfo, &s_uploadBuffer) != VK_SUCCESS) {
+		VkCommandBuffer buffers[MAX_FRAMES_IN_FLIGHT] = {};
+
+		if (dev.AllocateCommandBuffers (state.device, &allocateInfo, buffers) != VK_SUCCESS) {
 
 			SetError ("vkAllocateCommandBuffers(upload) failed");
 			return false;
+
+		}
+
+		for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+
+			s_slots[i].commandBuffer = buffers[i];
+			s_slots[i].ready = true;
 
 		}
 
@@ -446,40 +553,23 @@ namespace vulkan {
 
 		}
 
-		VkSemaphoreCreateInfo semaphoreInfo = {};
-		semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-		if (dev.CreateSemaphore (state.device, &semaphoreInfo, NULL, &s_uploadSemaphore) != VK_SUCCESS) {
-
-			SetError ("vkCreateSemaphore(upload) failed");
-			return false;
-
-		}
-
 		return true;
 
 	}
 
 	/**
-	 * Waits for the previously submitted upload, if there is one in flight.
+	 * Waits for the upload fence, which only the synchronous path uses.
 	 *
-	 * A failed wait leaves the flag set on purpose: the GPU may still be reading
+	 * A failed wait leaves the fence alone on purpose: the GPU may still be reading
 	 * the staging ring, and reusing it would corrupt the copy that is already
-	 * queued. The error carries the place and the result code, so a timeout and
-	 * a lost device do not look the same in the log.
+	 * queued. The error carries the place and the result code, so a timeout and a
+	 * lost device do not look the same in the log.
 	 */
-	static bool WaitUploads (const char* where) {
+	static bool WaitUploadFence (const char* where) {
 
 		State& state = S ();
 
-		if (!s_uploadInFlight) return true;
-
-		if (state.device == VK_NULL_HANDLE || s_uploadFence == VK_NULL_HANDLE) {
-
-			s_uploadInFlight = false;
-			return true;
-
-		}
+		if (state.device == VK_NULL_HANDLE || s_uploadFence == VK_NULL_HANDLE) return true;
 
 		state.upload.waits++;
 
@@ -499,141 +589,83 @@ namespace vulkan {
 
 		}
 
-		s_uploadInFlight = false;
 		state.dev.ResetFences (state.device, 1, &s_uploadFence);
 
 		return true;
 
 	}
 
-	/**
-	 * Takes back a signal whose waiter was never submitted.
-	 *
-	 * A submit with no command buffer and one wait is legal and is the cheapest
-	 * way to consume a binary semaphore, which keeps it usable for the next
-	 * signal. This is the failure path only: it runs when a frame submit did not
-	 * happen, so there is nothing to render anyway.
-	 */
-	static void ConsumeUploadSemaphore () {
-
-		if (!s_uploadSemaphorePending) return;
-
-		s_uploadSemaphorePending = false;
+	/** Gives one slot's ring back to the driver. The next upload creates it again. */
+	static void ReleaseStaging (int index) {
 
 		State& state = S ();
 
-		if (s_uploadSemaphore == VK_NULL_HANDLE || state.device == VK_NULL_HANDLE
-			|| state.graphicsQueue == VK_NULL_HANDLE) return;
-
-		VkPipelineStageFlags stages = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-
-		VkSubmitInfo submitInfo = {};
-		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-		submitInfo.waitSemaphoreCount = 1;
-		submitInfo.pWaitSemaphores = &s_uploadSemaphore;
-		submitInfo.pWaitDstStageMask = &stages;
-
-		state.dev.QueueSubmit (state.graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-
-	}
-
-	/** The frame submit either consumed the upload semaphore or never happened. */
-	void UploadSemaphoreHandled (bool waited) {
-
-		if (!s_uploadSemaphorePending) return;
-
-		if (waited) {
-
-			s_uploadSemaphorePending = false;
-			return;
-
-		}
-
-		ConsumeUploadSemaphore ();
-
-	}
-
-	/** Gives the ring back to the driver. The next upload creates it again. */
-	static void ReleaseStaging () {
-
-		State& state = S ();
+		UploadSlot& slot = s_slots[index];
 
 		if (state.device != VK_NULL_HANDLE) {
 
-			if (s_stagingMapped != NULL) state.dev.UnmapMemory (state.device, s_stagingMemory);
-			if (s_stagingMemory != VK_NULL_HANDLE) state.dev.FreeMemory (state.device, s_stagingMemory, NULL);
-			if (s_staging != VK_NULL_HANDLE) state.dev.DestroyBuffer (state.device, s_staging, NULL);
+			if (slot.mapped != NULL) state.dev.UnmapMemory (state.device, slot.stagingMemory);
+			if (slot.stagingMemory != VK_NULL_HANDLE) state.dev.FreeMemory (state.device, slot.stagingMemory, NULL);
+			if (slot.staging != VK_NULL_HANDLE) state.dev.DestroyBuffer (state.device, slot.staging, NULL);
 
 		}
 
-		s_staging = VK_NULL_HANDLE;
-		s_stagingMemory = VK_NULL_HANDLE;
-		s_stagingMapped = NULL;
-		s_stagingSize = 0;
-		s_stagingUsed = 0;
-		state.memory.staging = 0;
+		if (state.memory.staging >= slot.size) state.memory.staging -= slot.size;
+		else state.memory.staging = 0;
+
+		slot.staging = VK_NULL_HANDLE;
+		slot.stagingMemory = VK_NULL_HANDLE;
+		slot.mapped = NULL;
+		slot.size = 0;
+		slot.used = 0;
+
+	}
+
+	static void ReleaseAllStaging () {
+
+		for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) ReleaseStaging (i);
 
 	}
 
 	/**
-	 * Reserves staging space that is safe to write now.
+	 * Reserves staging space in this frame's ring.
 	 *
-	 * Writing into a region the previous upload is still reading would corrupt the
-	 * copy, so the previous batch is waited for here. That happens once per burst
-	 * (the fence is normally already signalled), not once per texture.
+	 * Nothing is waited for here. The ring belongs to one frame slot and
+	 * BeginFrame only marks it writable again once that slot's fence signalled, so
+	 * the GPU is finished with it by construction. A ring that is too small for a
+	 * whole frame of uploads grows instead of being flushed twice, because a second
+	 * flush of the same ring inside one frame would put two readers on those bytes.
 	 */
 	static bool StagingAlloc (VkDeviceSize bytes, void** data, VkDeviceSize* offset) {
 
 		State& state = S ();
 		DeviceApi& dev = state.dev;
 
-		// The previous burst is still being read by the GPU. Rewinding the buffer
-		// is only safe once that finished, and only once per burst: doing it for
-		// every texture made all uploads of a frame share the same bytes.
-		if (s_burstClosed) {
+		int index = UploadSlotIndex ();
 
-			if (!WaitUploads ("staging")) return false;
+		if (!SlotReady (index)) return false;
 
-			s_stagingUsed = 0;
+		UploadSlot& slot = s_slots[index];
 
-			// A ring grown for one large image goes back to the small size once the
-			// GPU stopped reading it, instead of staying resident for the session.
-			if (s_stagingSize > kStagingRing) ReleaseStaging ();
+		// A ring that grew for one large image goes back to the default size once
+		// the GPU stopped reading it, instead of staying resident for the session.
+		if (slot.size > kStagingRing && slot.used == 0) ReleaseStaging (index);
 
-			s_burstClosed = false;
+		if (slot.used + bytes > slot.size) {
 
-		}
+			VkDeviceSize size = slot.size > 0 ? slot.size : kStagingRing;
 
-		// A full ring is finished off and reused from the start. Growing it for the
-		// whole burst is what turned a song load into a 256 MB ring.
-		if (s_stagingUsed + bytes > s_stagingSize && s_stagingUsed > 0) {
+			while (size < slot.used + bytes) size <<= 1;
 
-			FlushPendingUploads (false);
+			VkBuffer previousBuffer = slot.staging;
+			VkDeviceMemory previousMemory = slot.stagingMemory;
+			void* previousMapped = slot.mapped;
+			VkDeviceSize carried = slot.used;
 
-			if (!WaitUploads ("ringfull")) return false;
-
-			s_stagingUsed = 0;
-			s_burstClosed = false;
-
-		}
-
-		// Grow only for an image that is larger than the ring itself. Everything
-		// else was already handled by reusing the ring above.
-		if (s_stagingUsed + bytes > s_stagingSize) {
-
-			VkDeviceSize size = s_stagingSize > 0 ? s_stagingSize : kStagingRing;
-
-			while (size < s_stagingUsed + bytes) size <<= 1;
-
-			VkBuffer previousBuffer = s_staging;
-			VkDeviceMemory previousMemory = s_stagingMemory;
-			void* previousMapped = s_stagingMapped;
-			VkDeviceSize carried = s_stagingUsed;
-
-			s_staging = VK_NULL_HANDLE;
-			s_stagingMemory = VK_NULL_HANDLE;
-			s_stagingMapped = NULL;
-			s_stagingSize = 0;
+			slot.staging = VK_NULL_HANDLE;
+			slot.stagingMemory = VK_NULL_HANDLE;
+			slot.mapped = NULL;
+			slot.size = 0;
 
 			VkBufferCreateInfo bufferInfo = {};
 			bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -641,7 +673,7 @@ namespace vulkan {
 			bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 			bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-			if (dev.CreateBuffer (state.device, &bufferInfo, NULL, &s_staging) != VK_SUCCESS) {
+			if (dev.CreateBuffer (state.device, &bufferInfo, NULL, &slot.staging) != VK_SUCCESS) {
 
 				SetError ("vkCreateBuffer(staging) failed");
 				return false;
@@ -649,7 +681,7 @@ namespace vulkan {
 			}
 
 			VkMemoryRequirements requirements;
-			dev.GetBufferMemoryRequirements (state.device, s_staging, &requirements);
+			dev.GetBufferMemoryRequirements (state.device, slot.staging, &requirements);
 
 			uint32_t type = 0;
 
@@ -657,8 +689,8 @@ namespace vulkan {
 				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &type)) {
 
 				SetError ("no host visible memory for the staging buffer");
-				dev.DestroyBuffer (state.device, s_staging, NULL);
-				s_staging = VK_NULL_HANDLE;
+				dev.DestroyBuffer (state.device, slot.staging, NULL);
+				slot.staging = VK_NULL_HANDLE;
 				return false;
 
 			}
@@ -668,34 +700,32 @@ namespace vulkan {
 			allocateInfo.allocationSize = requirements.size;
 			allocateInfo.memoryTypeIndex = type;
 
-			if (dev.AllocateMemory (state.device, &allocateInfo, NULL, &s_stagingMemory) != VK_SUCCESS
-				|| dev.BindBufferMemory (state.device, s_staging, s_stagingMemory, 0) != VK_SUCCESS) {
+			if (dev.AllocateMemory (state.device, &allocateInfo, NULL, &slot.stagingMemory) != VK_SUCCESS
+				|| dev.BindBufferMemory (state.device, slot.staging, slot.stagingMemory, 0) != VK_SUCCESS) {
 
 				SetError ("staging buffer allocation failed");
 
-				if (s_stagingMemory) dev.FreeMemory (state.device, s_stagingMemory, NULL);
+				if (slot.stagingMemory) dev.FreeMemory (state.device, slot.stagingMemory, NULL);
 
-				dev.DestroyBuffer (state.device, s_staging, NULL);
+				dev.DestroyBuffer (state.device, slot.staging, NULL);
 
-				s_staging = VK_NULL_HANDLE;
-				s_stagingMemory = VK_NULL_HANDLE;
+				slot.staging = VK_NULL_HANDLE;
+				slot.stagingMemory = VK_NULL_HANDLE;
 
 				return false;
 
 			}
 
-			state.memory.staging = requirements.size;
-
-			if (dev.MapMemory (state.device, s_stagingMemory, 0, size, 0, &s_stagingMapped) != VK_SUCCESS) {
+			if (dev.MapMemory (state.device, slot.stagingMemory, 0, size, 0, &slot.mapped) != VK_SUCCESS) {
 
 				SetError ("vkMapMemory(staging) failed");
 
-				dev.FreeMemory (state.device, s_stagingMemory, NULL);
-				dev.DestroyBuffer (state.device, s_staging, NULL);
+				dev.FreeMemory (state.device, slot.stagingMemory, NULL);
+				dev.DestroyBuffer (state.device, slot.staging, NULL);
 
-				s_staging = VK_NULL_HANDLE;
-				s_stagingMemory = VK_NULL_HANDLE;
-				s_stagingMapped = NULL;
+				slot.staging = VK_NULL_HANDLE;
+				slot.stagingMemory = VK_NULL_HANDLE;
+				slot.mapped = NULL;
 
 				return false;
 
@@ -705,7 +735,7 @@ namespace vulkan {
 			// already written have to move with it.
 			if (carried > 0 && previousMapped != NULL) {
 
-				memcpy (s_stagingMapped, previousMapped, (size_t)carried);
+				memcpy (slot.mapped, previousMapped, (size_t)carried);
 
 			}
 
@@ -717,14 +747,15 @@ namespace vulkan {
 
 			}
 
-			s_stagingSize = size;
+			slot.size = size;
+			state.memory.staging = size;
 
 		}
 
-		*offset = s_stagingUsed;
-		*data = (unsigned char*)s_stagingMapped + s_stagingUsed;
+		*offset = slot.used;
+		*data = (unsigned char*)slot.mapped + slot.used;
 
-		s_stagingUsed += (bytes + 15) & ~(VkDeviceSize)15;
+		slot.used += (bytes + 15) & ~(VkDeviceSize)15;
 
 		return true;
 
@@ -813,66 +844,59 @@ namespace vulkan {
 	/**
 	 * Records every queued copy into one command buffer and submits it.
 	 *
-	 * @return semaphore the next frame submit has to wait on, or VK_NULL_HANDLE
-	 *         when there was nothing to do.
+	 * The copies go into the current frame slot's own command buffer and are
+	 * submitted on the graphics queue immediately, before the frame's commands. The
+	 * queue order plus the pipeline barrier at the end of the buffer is what makes
+	 * them visible to the draws of that frame, so no semaphore is handed to the
+	 * frame submit and the CPU never waits here.
+	 *
+	 * @param synchronous the caller has no frame in flight to hang the copy on (a
+	 *        loader handing textures over): the submit is then waited for, because
+	 *        nothing else would tell the caller the pixels landed.
 	 */
-	static VkSemaphore FlushPendingUploads (bool signal) {
+	static bool FlushPendingUploads (bool synchronous) {
 
 		State& state = S ();
 		DeviceApi& dev = state.dev;
 
-		if (s_pending.empty ()) return VK_NULL_HANDLE;
+		if (s_pending.empty ()) return true;
 
-		// Overwriting an image that a frame still in flight is sampling is a race the
-		// driver cannot see. A freshly created image has no such reader, but an
-		// update does: wait for the most recently submitted frame to finish before
-		// the copy is queued. That fence is normally already signalled, so this
-		// costs a status query and nothing else.
-		bool updates = false;
+		double flushStart = PerfNow ();
 
-		for (size_t i = 0; i < s_pending.size (); ++i) {
+		if (!EnsureUploadObjects ()) {
 
-			if (s_pending[i].initialized) { updates = true; break; }
-
-		}
-
-		if (updates) {
-
-			State& frameState = S ();
-			uint32_t previous = (frameState.frameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
-
-			if (previous < frameState.inFlight.size () && frameState.inFlight[previous] != VK_NULL_HANDLE) {
-
-				VkResult updateWait = dev.WaitForFences (state.device, 1, &frameState.inFlight[previous], VK_TRUE, kUploadTimeoutNs);
-
-				if (updateWait != VK_SUCCESS) {
-
-					std::string message = "vkWaitForFences(update) failed: ";
-					message += ResultText (updateWait);
-					SetError (message.c_str ());
-					s_pending.clear ();
-					return VK_NULL_HANDLE;
-
-				}
-
-			}
-
-		}
-
-		if (!EnsureUploadObjects () || !WaitUploads ("flush")) {
-
+			state.waits.uploadFlush += (float)((PerfNow () - flushStart) * 1000.0);
 			s_pending.clear ();
-			return VK_NULL_HANDLE;
+			return false;
 
 		}
 
-		dev.ResetCommandBuffer (s_uploadBuffer, 0);
+		int index = UploadSlotIndex ();
+
+		if (!SlotReady (index)) {
+
+			state.waits.uploadFlush += (float)((PerfNow () - flushStart) * 1000.0);
+			s_pending.clear ();
+			return false;
+
+		}
+
+		UploadSlot& slot = s_slots[index];
+
+		VkCommandBuffer uploadBuffer = slot.commandBuffer;
+		VkBuffer stagingBuffer = slot.staging;
+
+		state.waits.uploadFlush += (float)((PerfNow () - flushStart) * 1000.0);
+
+		flushStart = PerfNow ();
+
+		dev.ResetCommandBuffer (uploadBuffer, 0);
 
 		VkCommandBufferBeginInfo beginInfo = {};
 		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 		beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
-		if (dev.BeginCommandBuffer (s_uploadBuffer, &beginInfo) != VK_SUCCESS) {
+		if (dev.BeginCommandBuffer (uploadBuffer, &beginInfo) != VK_SUCCESS) {
 
 			SetError ("vkBeginCommandBuffer(upload) failed");
 			s_pending.clear ();
@@ -899,7 +923,7 @@ namespace vulkan {
 			barrier.srcAccessMask = entry.initialized ? VK_ACCESS_SHADER_READ_BIT : 0;
 			barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
-			dev.CmdPipelineBarrier (s_uploadBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+			dev.CmdPipelineBarrier (uploadBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
 				0, 0, NULL, 0, NULL, 1, &barrier);
 
 			if (entry.pixels) {
@@ -916,7 +940,7 @@ namespace vulkan {
 				region.imageExtent.height = (uint32_t)entry.height;
 				region.imageExtent.depth = 1;
 
-				dev.CmdCopyBufferToImage (s_uploadBuffer, s_staging, entry.image,
+				dev.CmdCopyBufferToImage (uploadBuffer, stagingBuffer, entry.image,
 					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
 				state.upload.copies++;
@@ -933,7 +957,7 @@ namespace vulkan {
 				toSource.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 				toSource.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 
-				dev.CmdPipelineBarrier (s_uploadBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+				dev.CmdPipelineBarrier (uploadBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
 					0, 0, NULL, 0, NULL, 1, &toSource);
 
 				int sourceWidth = entry.width;
@@ -945,7 +969,7 @@ namespace vulkan {
 					toDestination.subresourceRange.baseMipLevel = level;
 					toDestination.subresourceRange.levelCount = 1;
 
-					dev.CmdPipelineBarrier (s_uploadBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+					dev.CmdPipelineBarrier (uploadBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
 						0, 0, NULL, 0, NULL, 1, &toDestination);
 
 					VkImageBlit blit = {};
@@ -970,7 +994,7 @@ namespace vulkan {
 					blit.dstSubresource.baseArrayLayer = 0;
 					blit.dstSubresource.layerCount = 1;
 
-					dev.CmdBlitImage (s_uploadBuffer, entry.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+					dev.CmdBlitImage (uploadBuffer, entry.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 						entry.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
 
 					VkImageMemoryBarrier sourceToDestination = toSource;
@@ -978,7 +1002,7 @@ namespace vulkan {
 					sourceToDestination.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 					sourceToDestination.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 
-					dev.CmdPipelineBarrier (s_uploadBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+					dev.CmdPipelineBarrier (uploadBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
 						0, 0, NULL, 0, NULL, 1, &sourceToDestination);
 
 					if (sourceWidth > 1) sourceWidth /= 2;
@@ -992,7 +1016,7 @@ namespace vulkan {
 				toRead.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 				toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
-				dev.CmdPipelineBarrier (s_uploadBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+				dev.CmdPipelineBarrier (uploadBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
 					0, 0, NULL, 0, NULL, 1, &toRead);
 
 			} else {
@@ -1003,7 +1027,7 @@ namespace vulkan {
 				toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 				toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
-				dev.CmdPipelineBarrier (s_uploadBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+				dev.CmdPipelineBarrier (uploadBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
 					0, 0, NULL, 0, NULL, 1, &toRead);
 
 			}
@@ -1012,54 +1036,73 @@ namespace vulkan {
 
 		s_pending.clear ();
 
-		if (dev.EndCommandBuffer (s_uploadBuffer) != VK_SUCCESS) {
+		if (dev.EndCommandBuffer (uploadBuffer) != VK_SUCCESS) {
 
 			SetError ("vkEndCommandBuffer(upload) failed");
-			return VK_NULL_HANDLE;
+			return false;
 
 		}
 
-		// A signal that never got a waiter is taken back first: signalling the same
-		// binary semaphore twice with no wait in between is a device error.
-		if (signal) ConsumeUploadSemaphore ();
-
+		// One submit on the graphics queue, before the frame's own commands. A
+		// synchronous batch (no frame open) gets a fence because nothing else would
+		// report the copy; the frame path gets none, because the frame's fence
+		// already covers everything submitted ahead of it on that queue.
 		VkSubmitInfo submitInfo = {};
 		submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &s_uploadBuffer;
-		// An upload that is waited for here needs no semaphore: the copy is done
-		// before anything else is submitted, and the caller just reads the fence.
-		submitInfo.signalSemaphoreCount = signal ? 1 : 0;
-		submitInfo.pSignalSemaphores = signal ? &s_uploadSemaphore : NULL;
+		submitInfo.pCommandBuffers = &uploadBuffer;
 
-		VkResult submitResult = dev.QueueSubmit (state.graphicsQueue, 1, &submitInfo, s_uploadFence);
+		if (synchronous) {
 
-		if (submitResult != VK_SUCCESS) {
+			if (s_uploadFence == VK_NULL_HANDLE) {
 
-			// Nothing was signalled and the fence stayed unsignalled, so the flag
-			// must not claim an upload is in flight.
-			std::string message = "vkQueueSubmit(upload) failed: ";
-			message += ResultText (submitResult);
-			SetError (message.c_str ());
+				VkFenceCreateInfo fenceInfo = {};
+				fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
 
-			s_uploadInFlight = false;
-			s_burstClosed = true;
-			return VK_NULL_HANDLE;
+				if (dev.CreateFence (state.device, &fenceInfo, NULL, &s_uploadFence) != VK_SUCCESS) {
+
+					SetError ("vkCreateFence(upload) failed");
+					return false;
+
+				}
+
+			}
 
 		}
 
-		s_uploadInFlight = true;
-		s_uploadSemaphorePending = signal;
-		s_burstClosed = true;
-		state.upload.flushes++;
+		VkResult submitResult = dev.QueueSubmit (state.graphicsQueue, 1, &submitInfo,
+			synchronous ? s_uploadFence : VK_NULL_HANDLE);
 
-		return signal ? s_uploadSemaphore : VK_NULL_HANDLE;
+		if (submitResult != VK_SUCCESS) {
+
+			std::string message = "vkQueueSubmit(upload) failed: ";
+			message += ResultText (submitResult);
+			SetError (message.c_str ());
+			return false;
+
+		}
+
+		state.upload.flushes++;
+		state.waits.uploadQueue += (float)((PerfNow () - flushStart) * 1000.0);
+
+		if (synchronous) {
+
+			if (WaitUploadFence ("sync")) return true;
+
+			return false;
+
+		}
+
+		return true;
 
 	}
 
-	VkSemaphore FlushTextureUploads () {
+	bool FlushTextureUploads (bool haveFrame) {
 
-		return FlushPendingUploads (true);
+		// With a frame being submitted the copy is part of that frame's queue
+		// traffic and its fence covers it; without one it has to be waited for, or
+		// the caller would hand a texture over before its pixels landed.
+		return FlushPendingUploads (!haveFrame);
 
 	}
 
@@ -1184,7 +1227,7 @@ namespace vulkan {
 
 		// The device is idle at this point (the caller waited), so the fence wait
 		// cannot block and the upload objects can go away as a unit.
-		if (state.device != VK_NULL_HANDLE) WaitUploads ("destroytex");
+		if (state.device != VK_NULL_HANDLE) WaitUploadFence ("destroytex");
 
 		for (std::map<uint64_t, VkSampler>::iterator it = s_samplers.begin (); it != s_samplers.end (); ++it) {
 
@@ -1194,7 +1237,7 @@ namespace vulkan {
 
 		s_samplers.clear ();
 
-		ReleaseStaging ();
+		ReleaseAllStaging ();
 
 		// Every texture is gone by now, so the remaining blocks are empty. This is a
 		// safety net: a block with no live image destroys itself in ReleaseImageMemory.
