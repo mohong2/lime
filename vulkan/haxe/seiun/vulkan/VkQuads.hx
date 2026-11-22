@@ -35,6 +35,20 @@ class VkQuads
 	/** Fade and flash rects drawn this frame. */
 	public static var fxQuads(default, null):Int = 0;
 
+	#if seiun_vulkan_perf
+	/** Milliseconds spent inside submit() this frame, and how many calls it took. */
+	public static var submitMs(default, null):Float = 0;
+	public static var submitCalls(default, null):Int = 0;
+	public static var submitQuads(default, null):Int = 0;
+
+	public static function resetProfile():Void
+	{
+		submitMs = 0;
+		submitCalls = 0;
+		submitQuads = 0;
+	}
+	#end
+
 	/** Cameras up to this list index already had their fade and flash drawn. */
 	static var fxIndex:Int = 0;
 
@@ -98,6 +112,10 @@ class VkQuads
 
 	static function submitInner(item:FlxDrawQuadsItem, camera:FlxCamera, shader:Shader):Bool
 	{
+		#if seiun_vulkan_perf
+		var profileStart = haxe.Timer.stamp ();
+		#end
+
 		// A skipped frame keeps the window contents; the frame was never opened.
 		if (!VkRuntime.isFrameOpen ()) return true;
 
@@ -112,6 +130,10 @@ class VkQuads
 		var quadCount:Int = item.quadCount;
 
 		if (quadCount <= 0) return true;
+
+		#if seiun_vulkan_perf
+		submitCalls++;
+		#end
 
 		// A shader can be fed a bitmap other than the batch graphic: flixel hands
 		// palette sprites a plain RGBA copy when a per-sprite shader cannot expand
@@ -250,6 +272,11 @@ class VkQuads
 			VkNative.setProgram (0);
 			customShaders++;
 		}
+
+		#if seiun_vulkan_perf
+		submitMs += (haxe.Timer.stamp () - profileStart) * 1000.0;
+		submitQuads += quadCount;
+		#end
 
 		return true;
 	}
@@ -424,8 +451,18 @@ class VkQuads
 		var scaleY:Float = scale != null ? scale.y : 1.0;
 		var zoom:Float = camera.initialZoom > 0 ? camera.initialZoom : 1.0;
 
-		rect[0] = camera.x * scaleX;
-		rect[1] = camera.y * scaleY;
+		// Where the camera sits on screen comes from its container, not from
+		// camera.x alone: FlxG.game carries the scale mode's letterbox offset (a
+		// 16:9 canvas on a 2.2:1 phone screen starts at x=234) and flashSprite
+		// carries the camera position. Reading camera.x alone put the clip rect at
+		// the top left corner, so the right edge of the game was cut off and the
+		// rest of the screen stayed black (seen on Android, a Mali-G610).
+		// _scrollRect is the sprite whose origin is the camera's top left corner:
+		// it is offset by -half the camera size, which _flashOffset cancels.
+		var origin = camera._scrollRect != null ? camera._scrollRect.__getWorldTransform () : null;
+
+		rect[0] = origin != null ? origin.tx : camera.x * scaleX;
+		rect[1] = origin != null ? origin.ty : camera.y * scaleY;
 		rect[2] = width * zoom * scaleX;
 		rect[3] = height * zoom * scaleY;
 

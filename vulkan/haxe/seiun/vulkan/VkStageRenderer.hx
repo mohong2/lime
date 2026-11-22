@@ -86,6 +86,10 @@ class VkStageRenderer extends OpenGLRenderer
 		// this renderer behaves exactly like the one it replaced.
 		if (!VkRuntime.enabled)
 		{
+			// The window was handed to Vulkan, and the OpenGL context went with it: running
+			// openfl's GL path here would throw instead of falling back.
+			if (VkRuntime.glReleased) return;
+
 			super.__render (object);
 			return;
 		}
@@ -110,6 +114,8 @@ class VkStageRenderer extends OpenGLRenderer
 	{
 		if (!VkRuntime.enabled)
 		{
+			if (VkRuntime.glReleased) return;
+
 			super.__clear ();
 			return;
 		}

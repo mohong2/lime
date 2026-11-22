@@ -40,6 +40,11 @@ class VkOverlay
 	/** Frame the overlay was last drawn on. */
 	public static var drawnFrame(default, null):Int = -1;
 
+	#if seiun_vulkan_perf
+	/** Milliseconds the whole stage walk cost this frame. */
+	public static var renderMs(default, null):Float = 0;
+	#end
+
 	static var stageRenderer:VkStageRenderer = null;
 
 	static var view:Array<Float> = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
@@ -98,6 +103,10 @@ class VkOverlay
 
 	public static function renderStage(renderer:VkStageRenderer):Int
 	{
+		#if seiun_vulkan_perf
+		var profileStart = haxe.Timer.stamp ();
+		#end
+
 		if (renderer != null) stageRenderer = renderer;
 
 		drawn = 0;
@@ -135,6 +144,10 @@ class VkOverlay
 		// from a known state.
 		VkNative.setView (null);
 		VkNative.setScissor (0, 0, 0, 0);
+
+		#if seiun_vulkan_perf
+		renderMs = (haxe.Timer.stamp () - profileStart) * 1000.0;
+		#end
 
 		return drawn;
 	}

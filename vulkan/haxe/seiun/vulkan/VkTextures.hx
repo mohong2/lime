@@ -123,6 +123,10 @@ class VkTextures
 				// Pixels are back in memory and were edited since the upload.
 				if (known == null || version == null || known.version == version) return handle;
 
+				#if seiun_vulkan_perf
+				currentLabel = "graphic:" + (graphic.key == null ? "?" : graphic.key);
+				#end
+
 				if (refresh (handle, bitmap))
 				{
 					versions.set (graphic, known.version);
@@ -207,6 +211,10 @@ class VkTextures
 				var version:Null<Int> = bitmapVersions.get (bitmap);
 
 				if (current == null || version == null || current.version == version) return handle;
+
+				#if seiun_vulkan_perf
+				currentLabel = "bitmap:" + bitmap.width + "x" + bitmap.height;
+				#end
 
 				if (refresh (handle, bitmap))
 				{
@@ -715,6 +723,20 @@ class VkTextures
 	 * for each of those. This path copies the pixels into the image that is
 	 * already bound.
 	 */
+	#if seiun_vulkan_perf
+	/** Labels of the textures re-uploaded on the previous frame, for the perf probe. */
+	public static var recentUpdates:Array<String> = [];
+	static var pendingUpdates:Array<String> = [];
+	static var currentLabel:String = "?";
+
+	public static function takeUpdates():Array<String>
+	{
+		var taken = pendingUpdates;
+		pendingUpdates = [];
+		return taken;
+	}
+	#end
+
 	static function refresh(handle:UInt64, bitmap:BitmapData):Bool
 	{
 		// Index and palette textures are immutable, and the RGBA bytes of a palette
@@ -731,6 +753,10 @@ class VkTextures
 		if (size[0] != data.width || size[1] != data.height) return false;
 
 		if (!VkNative.textureUpdate (handle, data.bytes, data.flags)) return false;
+
+		#if seiun_vulkan_perf
+		if (pendingUpdates.length < 64) pendingUpdates.push (currentLabel + " " + data.width + "x" + data.height);
+		#end
 
 		updated++;
 		releaseCPU (bitmap);

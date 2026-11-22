@@ -31,15 +31,47 @@ class VkRuntime
 
 	static var frameOpen:Bool = false;
 	static var started:Bool = false;
+
+	#if seiun_vulkan_perf
+	// Temporary probe (-D seiun_vulkan_perf): writes the frame cost counters so a
+	// slow frame can be measured from the log folder instead of guessed at.
+	static var perfBudget:Int = 0;
+	static var overlayMs:Float = 0;
+	static var frameMs:Float = 0;
+	static var lastTick:Float = 0;
+	#end
 	static var glReleaseTried:Bool = false;
 	static var loggedSkip:Bool = false;
+
+	/**
+	 * Extra answer for "did the application ask for Vulkan?".
+	 *
+	 * Flags and SEIUN_VULKAN still come first - they are the escape hatch for a machine
+	 * whose saved setting is the thing that will not start. This hook is what a game uses
+	 * for its own preference, so picking a renderer in a menu can start the backend without
+	 * faking a command line. Returns false when nothing is set.
+	 */
+	public static var preferred:Void->Bool = null;
 
 	public static function requested():Bool
 	{
 		if (flag ("--no-vulkan")) return false;
 		if (flag ("--vulkan")) return true;
 
-		return envTrue ("SEIUN_VULKAN");
+		if (envTrue ("SEIUN_VULKAN")) return true;
+
+		// Any other value for the variable is an explicit switch-off: do not fall through to
+		// the saved preference, that would make the override impossible to trust.
+		var env = Sys.getEnv ("SEIUN_VULKAN");
+
+		if (env != null && env != "") return false;
+
+		if (preferred != null)
+		{
+			try return preferred () catch (error:Dynamic) return false;
+		}
+
+		return false;
 	}
 
 	public static function start(verbose:Bool = false):Bool
@@ -107,11 +139,17 @@ class VkRuntime
 	}
 
 	/**
-	 * Drops the OpenGL context lime created while booting the window. Vulkan owns
-	 * the window by now, so nothing can be drawn through OpenGL any more and the
-	 * context only holds driver memory.
+	 * Drops the OpenGL context lime created while booting the window.
+	 *
+	 * Windows calls this once Vulkan owns the window: nothing can be drawn through OpenGL any
+	 * more and the context only holds driver memory. Android calls it *before* the backend
+	 * starts, because there the EGL surface is what keeps the ANativeWindow away from Vulkan
+	 * (the driver answers VK_ERROR_NATIVE_WINDOW_IN_USE_KHR otherwise).
+	 *
+	 * Public so an application can hand the window over itself; glReleased() tells it whether
+	 * OpenGL can still draw afterwards.
 	 */
-	static function releaseOpenGL():Void
+	public static function releaseOpenGL():Void
 	{
 		if (glReleased || glReleaseTried) return;
 
@@ -156,6 +194,10 @@ class VkRuntime
 			VkQuads.resetCameraFx ();
 			VkCameraFilters.reset ();
 
+			#if seiun_vulkan_perf
+			VkQuads.resetProfile ();
+			#end
+
 			return true;
 		}
 
@@ -183,6 +225,10 @@ class VkRuntime
 	{
 		if (!enabled || !frameOpen) return;
 
+		#if seiun_vulkan_perf
+		var overlayStart = haxe.Timer.stamp ();
+		#end
+
 		// OpenFL overlay goes last so it sits on top of every camera. A frame the
 		// game did not draw keeps the previous contents on screen: opening an empty
 		// frame here would clear the window and leave only the overlay.
@@ -207,6 +253,14 @@ class VkRuntime
 			log ("overlay disabled after an error: " + Std.string (error));
 		}
 
+		#if seiun_vulkan_perf
+		var now = haxe.Timer.stamp ();
+
+		overlayMs = (now - overlayStart) * 1000.0;
+		frameMs = lastTick > 0 ? (now - lastTick) * 1000.0 : 0.0;
+		lastTick = now;
+		#end
+
 		frameOpen = false;
 
 		var started = haxe.Timer.stamp ();
@@ -221,10 +275,64 @@ class VkRuntime
 			return;
 		}
 
+		#if seiun_vulkan_perf
+		perfDump ();
+		#end
+
 		// The stage renderer is installed from inside endFrame, so the first frame
 		// that reaches this point is the first one OpenFL rendered without OpenGL.
 		if (VkOverlay.ownsStage ()) releaseOpenGL ();
 	}
+
+	#if seiun_vulkan_perf
+	/** One line per 300 frames: where the frame time goes, per counter group. */
+	static function perfDump():Void
+	{
+		if (perfBudget > 0)
+		{
+			perfBudget--;
+			return;
+		}
+
+		perfBudget = 300;
+
+		var lines:Array<String> = [];
+
+		lines.push ("frame=" + frameId + " frameMs=" + round2 (frameMs) + " overlayMs=" + round2 (overlayMs)
+			+ " endMs=" + round2 (endMs) + " quads=" + VkQuads.submitted + " overlayQuads=" + VkOverlay.drawn);
+
+		lines.push ("profile submitCalls=" + VkQuads.submitCalls + " submitQuads=" + VkQuads.submitQuads
+			+ " submitMs=" + round2 (VkQuads.submitMs)
+			+ " overlayWalkMs=" + round2 (VkOverlay.renderMs) + " filterPasses=" + VkCameraFilters.passes);
+
+		lines.push ("updates=" + VkTextures.takeUpdates ().join (", "));
+		lines.push (VkTextures.stats ());
+
+		for (line in status ().split ("\n"))
+		{
+			if (StringTools.startsWith (line, "draw") || StringTools.startsWith (line, "q")) continue;
+
+			lines.push (line);
+		}
+
+		var text = Date.now ().toString () + "\n" + lines.join ("\n") + "\n";
+
+		try
+		{
+			if (!FileSystem.exists ("logs")) FileSystem.createDirectory ("logs");
+
+			File.saveContent ("logs/vulkan-perf.txt", text);
+		}
+		catch (error:Dynamic) {}
+
+		Sys.println ("[vulkan-perf] " + lines.join (" "));
+	}
+
+	static function round2(value:Float):Float
+	{
+		return Std.int (value * 100.0) / 100.0;
+	}
+	#end
 
 	public static function resize(width:Int, height:Int):Void
 	{
