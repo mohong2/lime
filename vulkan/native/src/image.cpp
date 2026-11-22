@@ -900,7 +900,7 @@ namespace vulkan {
 
 			SetError ("vkBeginCommandBuffer(upload) failed");
 			s_pending.clear ();
-			return VK_NULL_HANDLE;
+			return false;
 
 		}
 
