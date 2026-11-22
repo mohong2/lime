@@ -14,11 +14,33 @@
 
 namespace vulkan {
 
+	// What the host last reported, and what the swapchain was actually built for. They
+	// differ exactly between a surface being recreated and the render thread noticing it.
 	static void* androidWindow = NULL;
+	static void* appliedWindow = NULL;
 
 	void SetAndroidWindow (void* window) {
 
+		// Called from the Java/SDL thread: only a pointer store here. Rebuilding the
+		// swapchain belongs to the render thread (see TakeChangedAndroidWindow).
 		androidWindow = window;
+
+	}
+
+	void MarkAndroidWindowApplied (void* window) {
+
+		appliedWindow = window;
+
+	}
+
+	bool TakeChangedAndroidWindow (void** window) {
+
+		if (androidWindow == appliedWindow) return false;
+
+		// Not marked applied here: the caller does that once the new surface really
+		// exists, so a failed rebuild is retried instead of being silently skipped.
+		if (window) *window = androidWindow;
+		return true;
 
 	}
 

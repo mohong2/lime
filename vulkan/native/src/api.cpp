@@ -167,7 +167,13 @@ extern "C" {
 
 		vulkan::S ().dialogEnabled = vulkan::S ().options.fallbackDialog != 0;
 
-		return vulkan::AttachDevice (nativeWindow, width, height) ? 1 : 0;
+		LIME_VK_LOGCAT ("context_create: window=%p %dx%d", nativeWindow, width, height);
+
+		bool attached = vulkan::AttachDevice (nativeWindow, width, height);
+
+		LIME_VK_LOGCAT ("context_create: attach returned %d", attached ? 1 : 0);
+
+		return attached ? 1 : 0;
 
 	}
 
@@ -290,6 +296,12 @@ extern "C" {
 		snprintf (buffer, sizeof (buffer), "width=%u\n", state.extent.width); text += buffer;
 		snprintf (buffer, sizeof (buffer), "height=%u\n", state.extent.height); text += buffer;
 		snprintf (buffer, sizeof (buffer), "images=%u\n", state.imageCount); text += buffer;
+		snprintf (buffer, sizeof (buffer), "surface=%ux%u min=%ux%u max=%ux%u transform=%d pre=%d supported=0x%x swap=%ux%u\n",
+			state.surfaceExtent.width, state.surfaceExtent.height,
+			state.surfaceMinExtent.width, state.surfaceMinExtent.height,
+			state.surfaceMaxExtent.width, state.surfaceMaxExtent.height,
+			(int)state.surfaceTransform, (int)state.surfacePreTransform, (unsigned)state.surfaceTransforms,
+			state.extent.width, state.extent.height); text += buffer;
 		snprintf (buffer, sizeof (buffer), "frames=%llu\n", (unsigned long long)state.framesPresented); text += buffer;
 		snprintf (buffer, sizeof (buffer), "error=%s\n", state.lastError.c_str ()); text += buffer;
 		snprintf (buffer, sizeof (buffer), "fallback=%s\n", state.fallbackReason.c_str ()); text += buffer;
@@ -1247,7 +1259,32 @@ extern "C" {
 
 	int lime_vulkan_release_gl (void) {
 
-#if defined(LIME_VULKAN_WINDOWS)
+#if defined(LIME_VULKAN_ANDROID)
+
+		// Provided by lime's SDL3 window: destroys the EGL surface OpenGL booted with, which is
+		// what keeps the ANativeWindow from being handed to Vulkan. Weak, because the
+		// standalone build has no lime to ask. (Already inside the extern "C" block above.)
+		int lime_vulkan_android_release_gl (void) __attribute__ ((weak));
+
+		if (!lime_vulkan_android_release_gl) {
+
+			vulkan::SetError ("no Android window to release (lime did not provide the hook)");
+			return 2;
+
+		}
+
+		int released = lime_vulkan_android_release_gl ();
+
+		if (released == 0) {
+
+			vulkan::SetError ("the window has no OpenGL surface to release");
+			return 1;
+
+		}
+
+		return 0;
+
+#elif defined(LIME_VULKAN_WINDOWS)
 
 		// Resolved at run time: this library never links opengl32 itself.
 		HMODULE opengl = GetModuleHandleA ("opengl32.dll");
