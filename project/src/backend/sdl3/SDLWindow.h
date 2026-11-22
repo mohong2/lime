@@ -55,6 +55,19 @@ namespace lime {
 			virtual const char* SetTitle (const char* title);
 			virtual void WarpMouse (int x, int y);
 
+			/**
+			 * Android + Vulkan: gives the ANativeWindow up by destroying the EGL surface.
+			 *
+			 * An EGL window surface keeps a buffer producer on the window, and a Vulkan driver
+			 * refuses to create a surface on a window that already has one
+			 * (VK_ERROR_NATIVE_WINDOW_IN_USE_KHR, measured on a Mali-G610). Unbinding the
+			 * context is not enough: the surface itself has to go.
+			 *
+			 * One-way for this process: OpenGL state cannot come back, so callers have to be
+			 * ready to restart into OpenGL if Vulkan then fails.
+			 */
+			bool ReleaseAndroidGLContext ();
+
 			SDL_Renderer* sdlRenderer;
 			SDL_Texture* sdlTexture;
 			SDL_Window* sdlWindow;

@@ -11,6 +11,112 @@
 #undef CreateWindow
 #endif
 
+#if defined (HX_ANDROID) && defined (LIME_VULKAN)
+#include <SDL3/SDL_properties.h>
+#include <EGL/egl.h>
+
+
+// Vulkan cannot discover an Android window: the ANativeWindow belongs to the activity and
+// only SDL knows the pointer, so the renderer takes it through this entry point. Declared
+// here rather than included: the renderer header is only on the include path of the
+// renderer's own sources, and a -Dlime-vulkan-off build has nothing to declare at all.
+extern "C" int lime_vulkan_set_android_window (void* nativeWindow);
+
+namespace lime {
+
+	// The game's window, for the event watch below. One per process, cleared on destroy.
+	static SDL_Window* seiunVulkanWindow = 0;
+
+	// The same window as a lime object, so the renderer can ask it to drop its EGL surface.
+	static SDLWindow* seiunVulkanLimeWindow = 0;
+
+	/**
+	 * The live ANativeWindow, for the renderer when it is about to create its surface.
+	 *
+	 * Read fresh from SDL instead of trusting the handle registered at window creation: the
+	 * activity replaces the surface on resume/rotation, and a destroyed handle makes
+	 * vkCreateAndroidSurfaceKHR fail with an error that says nothing about the cause.
+	 */
+	extern "C" void* lime_vulkan_android_window () {
+
+		if (!seiunVulkanWindow) return 0;
+
+		return SDL_GetPointerProperty (SDL_GetWindowProperties (seiunVulkanWindow),
+			SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, NULL);
+
+	}
+
+	/**
+	 * Gives the window to Vulkan by dropping the EGL surface OpenGL booted with.
+	 *
+	 * The renderer calls this when a driver says the native window is in use - that is the
+	 * surface SDL created for OpenGL. Returns 1 when a context was actually released.
+	 */
+	extern "C" int lime_vulkan_android_release_gl () {
+
+		if (!seiunVulkanLimeWindow) return 0;
+
+		int released = seiunVulkanLimeWindow->ReleaseAndroidGLContext () ? 1 : 0;
+
+		if (released) fprintf (stderr, "[lime] released the EGL surface so Vulkan can own the window\n");
+
+		return released;
+
+	}
+
+	/** Hands the activity's current ANativeWindow to the renderer (NULL when there is none). */
+	static void SeiunPushVulkanWindow () {
+
+		if (!seiunVulkanWindow) return;
+
+		lime_vulkan_set_android_window (SDL_GetPointerProperty (SDL_GetWindowProperties (seiunVulkanWindow),
+			SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, NULL));
+
+	}
+
+	/**
+	 * The activity destroys and recreates its surface on every resume, and SDL swaps the
+	 * ANativeWindow pointer with it. The renderer only learns about that here: this watch
+	 * *records* the handle (the render thread rebuilds the swapchain at the next frame
+	 * boundary), so it is safe to run on whichever thread posts the event.
+	 */
+	static bool SDLCALL SeiunVulkanWindowWatch (void* userdata, SDL_Event* event) {
+
+		switch (event->type) {
+
+			case SDL_EVENT_WINDOW_SHOWN:
+			case SDL_EVENT_WINDOW_RESTORED:
+			case SDL_EVENT_WINDOW_EXPOSED:
+			case SDL_EVENT_WINDOW_RESIZED:
+			case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+			case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+			case SDL_EVENT_DID_ENTER_FOREGROUND:
+				// Only a pointer hand-over here: this callback runs on whichever thread posted
+				// the event, and tearing an EGL surface down from there could race a frame.
+				// The render thread frees the window itself right before it rebuilds its
+				// surface (see RecreateAndroidSurface).
+				SeiunPushVulkanWindow ();
+				break;
+
+			case SDL_EVENT_WINDOW_HIDDEN:
+			case SDL_EVENT_WILL_ENTER_BACKGROUND:
+			case SDL_EVENT_WINDOW_DESTROYED:
+				// A stale ANativeWindow is worse than a fallback: stop presenting instead of
+				// drawing into a surface the activity may already have handed to someone else.
+				if (event->type == SDL_EVENT_WINDOW_DESTROYED) seiunVulkanWindow = 0;
+				lime_vulkan_set_android_window (NULL);
+				break;
+
+		}
+
+		return true;
+
+	}
+
+}
+
+#endif
+
 namespace lime {
 
 
@@ -347,10 +453,33 @@ namespace lime {
 
 		}
 
+		#if defined (HX_ANDROID) && defined (LIME_VULKAN)
+
+		// Android only: hand the ANativeWindow to the Vulkan renderer, and keep handing it
+		// over after the activity recreates its surface. Nothing here starts the renderer -
+		// that stays the application's decision (seiun.vulkan.VkRuntime) - this only makes
+		// the window reachable, which is what used to be missing on Android.
+		seiunVulkanWindow = sdlWindow;
+		seiunVulkanLimeWindow = this;
+		SeiunPushVulkanWindow ();
+		SDL_AddEventWatch (SeiunVulkanWindowWatch, NULL);
+
+		#endif
+
 	}
 
 
 	SDLWindow::~SDLWindow () {
+
+		#if defined (HX_ANDROID) && defined (LIME_VULKAN)
+
+		// The renderer must not be left holding a window that is about to go away.
+		SDL_RemoveEventWatch (SeiunVulkanWindowWatch, NULL);
+		seiunVulkanWindow = 0;
+		seiunVulkanLimeWindow = 0;
+		lime_vulkan_set_android_window (NULL);
+
+		#endif
 
 		if (sdlWindow) {
 
@@ -395,6 +524,73 @@ namespace lime {
 			SDL_ShowSimpleMessageBox (SDL_MESSAGEBOX_INFORMATION, title, message, sdlWindow);
 
 		}
+
+	}
+
+
+	/**
+	 * Destroys the EGL surface SDL created for a window, if one is still there.
+	 *
+	 * The handle is published as a window property, which is what makes this work for a
+	 * surface the activity recreated on resume - the one SDL_GL_DestroyContext knows nothing
+	 * about, because it only ever destroys the *context*.
+	 */
+	static bool DropAndroidEGLSurface (SDL_Window* window) {
+
+		#if !defined (HX_ANDROID)
+
+		// Only Android puts an EGL surface on the ANativeWindow; the desktop keeps its
+		// context on the window itself, which SDL_GL_DestroyContext already released.
+		(void) window;
+		return false;
+
+		#else
+
+		if (!window) return false;
+
+		EGLSurface surface = (EGLSurface) SDL_GetPointerProperty (SDL_GetWindowProperties (window),
+			SDL_PROP_WINDOW_ANDROID_SURFACE_POINTER, NULL);
+
+		if (surface == NULL || surface == EGL_NO_SURFACE) return false;
+
+		// After a resume nothing is current, and eglDestroySurface needs a display handle:
+		// the process-wide one SDL initialised is exactly this.
+		EGLDisplay display = eglGetCurrentDisplay ();
+
+		if (display == EGL_NO_DISPLAY) display = eglGetDisplay (EGL_DEFAULT_DISPLAY);
+
+		if (display == EGL_NO_DISPLAY) return false;
+
+		// SDL keeps its own copy of this handle and is never asked to draw through it again;
+		// a later eglDestroySurface on the dead handle is a no-op error.
+		// The return value is the only signal that the window is free again; the caller
+		// tells Vulkan to ask for it a second time when this reports failure.
+		return eglDestroySurface (display, surface) == EGL_TRUE;
+
+		#endif
+
+	}
+
+
+	bool SDLWindow::ReleaseAndroidGLContext () {
+
+		bool released = false;
+
+		if (context) {
+
+			SDL_GL_MakeCurrent (sdlWindow, NULL);
+			SDL_GL_DestroyContext (context);
+			context = 0;
+			released = true;
+
+		}
+
+		// SDL_GL_DestroyContext only destroys the context. The EGL surface keeps the
+		// ANativeWindow's producer alive, and drivers answer
+		// VK_ERROR_NATIVE_WINDOW_IN_USE_KHR while it does (measured on a Mali-G610).
+		if (DropAndroidEGLSurface (sdlWindow)) released = true;
+
+		return released;
 
 	}
 
