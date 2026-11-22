@@ -403,6 +403,10 @@
 
 			<compilerflag value="-I../vulkan/native/include" />
 			<compilerflag value="-I../vulkan/third_party" />
+			<!-- Visible to the rest of the library as well, so the window backends can
+			     hand their native handle to the renderer without linking against a
+			     renderer that a -Dlime-vulkan-off build does not contain. -->
+			<compilerflag value="-DLIME_VULKAN" />
 
 			<file name="../vulkan/native/src/loader.cpp" />
 			<file name="../vulkan/native/src/device.cpp" />
