@@ -1125,9 +1125,9 @@ namespace lime {
 
 			switch (event->type) {
 
-				case SDL_EVENT_WINDOW_SHOWN: windowEvent.type = WINDOW_ACTIVATE; break;
+				case SDL_EVENT_WINDOW_SHOWN: windowEvent.type = WINDOW_SHOW; break;
 				case SDL_EVENT_WINDOW_CLOSE_REQUESTED: windowEvent.type = WINDOW_CLOSE; break;
-				case SDL_EVENT_WINDOW_HIDDEN: windowEvent.type = WINDOW_DEACTIVATE; break;
+				case SDL_EVENT_WINDOW_HIDDEN: windowEvent.type = WINDOW_HIDE; break;
 				case SDL_EVENT_WINDOW_MOUSE_ENTER: windowEvent.type = WINDOW_ENTER; break;
 				case SDL_EVENT_WINDOW_FOCUS_GAINED: windowEvent.type = WINDOW_FOCUS_IN; break;
 				case SDL_EVENT_WINDOW_FOCUS_LOST: windowEvent.type = WINDOW_FOCUS_OUT; break;
