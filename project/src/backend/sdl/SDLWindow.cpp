@@ -619,8 +619,8 @@ namespace lime {
 
 	int SDLWindow::GetHeight () {
 
-		int width;
-		int height;
+		int width = 0;
+		int height = 0;
 
 		SDL_GetWindowSize (sdlWindow, &width, &height);
 
@@ -691,8 +691,8 @@ namespace lime {
 
 	int SDLWindow::GetWidth () {
 
-		int width;
-		int height;
+		int width = 0;
+		int height = 0;
 
 		SDL_GetWindowSize (sdlWindow, &width, &height);
 
@@ -703,8 +703,8 @@ namespace lime {
 
 	int SDLWindow::GetX () {
 
-		int x;
-		int y;
+		int x = 0;
+		int y = 0;
 
 		SDL_GetWindowPosition (sdlWindow, &x, &y);
 
@@ -715,8 +715,8 @@ namespace lime {
 
 	int SDLWindow::GetY () {
 
-		int x;
-		int y;
+		int x = 0;
+		int y = 0;
 
 		SDL_GetWindowPosition (sdlWindow, &x, &y);
 
