@@ -39,6 +39,10 @@ namespace lime {
 	std::map<int, std::map<int, int> > gamepadsAxisMap;
 	bool inBackground = false;
 
+	// The subsystem flags SDL_Init() was called with. SDL_QuitSubSystem() has to
+	// receive the same flags before SDL_Quit() runs, so Quit() needs them back.
+	Uint32 initFlags = 0;
+
 	// High-resolution time in milliseconds from the performance counter.
 	static double HiResMs () {
 
@@ -345,7 +349,7 @@ namespace lime {
 		// the SDL_main entry point mechanism (hxcpp provides its own main)
 		SDL_SetMainReady ();
 
-		Uint32 initFlags = SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK;
+		initFlags = SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK;
 		#if defined(LIME_MOJOAL) || defined(LIME_OPENALSOFT)
 		initFlags |= SDL_INIT_AUDIO;
 		#endif
@@ -1121,9 +1125,9 @@ namespace lime {
 
 			switch (event->type) {
 
-				case SDL_EVENT_WINDOW_SHOWN: windowEvent.type = WINDOW_ACTIVATE; break;
+				case SDL_EVENT_WINDOW_SHOWN: windowEvent.type = WINDOW_SHOW; break;
 				case SDL_EVENT_WINDOW_CLOSE_REQUESTED: windowEvent.type = WINDOW_CLOSE; break;
-				case SDL_EVENT_WINDOW_HIDDEN: windowEvent.type = WINDOW_DEACTIVATE; break;
+				case SDL_EVENT_WINDOW_HIDDEN: windowEvent.type = WINDOW_HIDE; break;
 				case SDL_EVENT_WINDOW_MOUSE_ENTER: windowEvent.type = WINDOW_ENTER; break;
 				case SDL_EVENT_WINDOW_FOCUS_GAINED: windowEvent.type = WINDOW_FOCUS_IN; break;
 				case SDL_EVENT_WINDOW_FOCUS_LOST: windowEvent.type = WINDOW_FOCUS_OUT; break;
@@ -1199,6 +1203,8 @@ namespace lime {
 
 		applicationEvent.type = EXIT;
 		ApplicationEvent::Dispatch (&applicationEvent);
+
+		SDL_QuitSubSystem (initFlags);
 
 		SDL_Quit ();
 
