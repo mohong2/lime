@@ -39,6 +39,10 @@ namespace lime {
 	std::map<int, std::map<int, int> > gamepadsAxisMap;
 	bool inBackground = false;
 
+	// The subsystem flags SDL_Init() was called with. SDL_QuitSubSystem() has to
+	// receive the same flags before SDL_Quit() runs, so Quit() needs them back.
+	Uint32 initFlags = 0;
+
 	// High-resolution time in milliseconds from the performance counter.
 	static double HiResMs () {
 
@@ -345,7 +349,7 @@ namespace lime {
 		// the SDL_main entry point mechanism (hxcpp provides its own main)
 		SDL_SetMainReady ();
 
-		Uint32 initFlags = SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK;
+		initFlags = SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK;
 		#if defined(LIME_MOJOAL) || defined(LIME_OPENALSOFT)
 		initFlags |= SDL_INIT_AUDIO;
 		#endif
@@ -1199,6 +1203,8 @@ namespace lime {
 
 		applicationEvent.type = EXIT;
 		ApplicationEvent::Dispatch (&applicationEvent);
+
+		SDL_QuitSubSystem (initFlags);
 
 		SDL_Quit ();
 
