@@ -111,6 +111,7 @@ namespace lime {
 				seekTargetMs = 0;
 				seekSerial = 0;
 				lastPlayedFrame = 0;
+				lastReportedFrame = -1;
 				destroyed = false;
 
 				for (int i = 0; i < STREAM_RING_BUFFERS; i++) alBuffers[i] = 0;
@@ -356,27 +357,33 @@ namespace lime {
 
 				}
 
-				int queued = ALGetInt (alSource, AL_BUFFERS_QUEUED);
-				int processed = ALGetInt (alSource, AL_BUFFERS_PROCESSED);
 				int offset = ALGetInt (alSource, AL_SAMPLE_OFFSET);
 
-				if (queued <= 0) {
+				if (offset < 0) offset = 0;
 
-					return (double)lastPlayedFrame.load () * 1000.0 / (double)sampleRate;
-
-				}
-
-				// Buffers that finished playing are still in queueInfo until the
-				// feeder thread unqueues them, so the playing one is at index
-				// "processed".
-				int index = processed;
-				if (index < 0) index = 0;
-				if (index >= (int)queueInfo.size ()) index = (int)queueInfo.size () - 1;
-
-				int64_t sample = queueInfo[(size_t)index].startFrame + (int64_t)offset;
+				// AL_SAMPLE_OFFSET is measured from the first buffer still in
+				// the queue: OpenAL Soft's GetSourceOffset adds the length of
+				// every buffer that precedes the one currently playing, so the
+				// matching base is the oldest queued block. Using the playing
+				// block instead (the AL_BUFFERS_PROCESSED index) counts those
+				// already played blocks twice and throws the song position
+				// forward by a whole block every time the mixer finishes one.
+				int64_t sample = queueInfo.front ().startFrame + (int64_t)offset;
 
 				if (sample < 0) sample = 0;
 				if (sample > totalSamples) sample = totalSamples;
+
+				// The mixer refreshes the offset once per period, and a stale
+				// read or a draining queue can move it back. Never report a
+				// smaller position unless the stream really jumped (seek, or a
+				// loop wrap), or the chart stutters on the way back.
+				if (lastReportedFrame >= 0 && sample < lastReportedFrame && lastReportedFrame - sample <= STREAM_BLOCK_FRAMES) {
+
+					sample = lastReportedFrame;
+
+				}
+
+				lastReportedFrame = sample;
 
 				return (double)sample * 1000.0 / (double)sampleRate;
 
@@ -790,6 +797,7 @@ namespace lime {
 
 					queueInfo.clear ();
 					freeBuffers.clear ();
+					lastReportedFrame = -1;
 
 					for (int i = 0; i < STREAM_RING_BUFFERS; i++) freeBuffers.push_back (alBuffers[i]);
 
@@ -824,6 +832,10 @@ namespace lime {
 			std::atomic<double> seekTargetMs;
 			std::atomic<int> seekSerial;
 			std::atomic<int64_t> lastPlayedFrame;
+
+			// Guarded by queueMutex: position reported by the previous
+			// GetTimeMs call, used to keep the reported time monotonic.
+			int64_t lastReportedFrame;
 
 			// Feeder-thread only.
 			bool desiredPlaying;
