@@ -258,6 +258,10 @@ class NativeApplication
 			var keyCode:KeyCode = Std.int(int32);
 			var modifier:KeyModifier = keyEventInfo.modifier;
 
+			// Publish the event's own timestamp for the duration of the dispatch, then
+			// clear it: listeners see it only while handling this event.
+			Window.keyEventTimestampNs = keyEventInfo.timestamp;
+
 			switch (type)
 			{
 				case KEY_DOWN:
@@ -266,6 +270,8 @@ class NativeApplication
 				case KEY_UP:
 					window.onKeyUp.dispatch(keyCode, modifier);
 			}
+
+			Window.keyEventTimestampNs = 0;
 
 			#if (windows || linux)
 			if (keyCode == RETURN)
@@ -461,6 +467,8 @@ class NativeApplication
 					touch.device = touchEventInfo.device;
 				}
 
+				touch.timestamp = touchEventInfo.timestamp;
+
 				currentTouches.set(touch.id, touch);
 
 				Touch.onStart.dispatch(touch);
@@ -475,6 +483,7 @@ class NativeApplication
 					touch.dx = touchEventInfo.dx;
 					touch.dy = touchEventInfo.dy;
 					touch.pressure = touchEventInfo.pressure;
+					touch.timestamp = touchEventInfo.timestamp;
 
 					Touch.onEnd.dispatch(touch);
 
@@ -492,6 +501,7 @@ class NativeApplication
 					touch.dx = touchEventInfo.dx;
 					touch.dy = touchEventInfo.dy;
 					touch.pressure = touchEventInfo.pressure;
+					touch.timestamp = touchEventInfo.timestamp;
 
 					Touch.onMove.dispatch(touch);
 				}
@@ -762,18 +772,26 @@ private enum abstract JoystickEventType(Int)
 	public var modifier:Int;
 	public var type:KeyEventType;
 	public var windowID:Int;
+	/**
+		Milliseconds-free nanosecond stamp of the input event itself (SDL_GetTicksNS
+		domain, the same clock as `lime.system.System.getTimer`), 0 when the backend
+		has none. The C++ `lime::KeyEvent` struct mirrors these fields in this exact
+		order and writes through a ValuePointer, so new fields go at the end.
+	**/
+	public var timestamp:Float;
 
-	public function new(type:KeyEventType = null, windowID:Int = 0, keyCode: Float = 0, modifier:Int = 0)
+	public function new(type:KeyEventType = null, windowID:Int = 0, keyCode: Float = 0, modifier:Int = 0, timestamp:Float = 0)
 	{
 		this.type = type;
 		this.windowID = windowID;
 		this.keyCode = keyCode;
 		this.modifier = modifier;
+		this.timestamp = timestamp;
 	}
 
 	public function clone():KeyEventInfo
 	{
-		return new KeyEventInfo(type, windowID, keyCode, modifier);
+		return new KeyEventInfo(type, windowID, keyCode, modifier, timestamp);
 	}
 }
 
@@ -908,8 +926,15 @@ private enum abstract TextEventType(Int)
 	public var type:TouchEventType;
 	public var x:Float;
 	public var y:Float;
+	/**
+		Nanosecond stamp of the finger event itself (SDL_GetTicksNS domain, the same clock
+		as `lime.system.System.getTimer`), 0 when the backend has none. The C++
+		`lime::TouchEvent` struct mirrors these fields in this exact order and writes
+		through a ValuePointer, so new fields go at the end.
+	**/
+	public var timestamp:Float;
 
-	public function new(type:TouchEventType = null, x:Float = 0, y:Float = 0, id:Int = 0, dx:Float = 0, dy:Float = 0, pressure:Float = 0, device:Int = 0)
+	public function new(type:TouchEventType = null, x:Float = 0, y:Float = 0, id:Int = 0, dx:Float = 0, dy:Float = 0, pressure:Float = 0, device:Int = 0, timestamp:Float = 0)
 	{
 		this.type = type;
 		this.x = x;
@@ -919,11 +944,12 @@ private enum abstract TextEventType(Int)
 		this.dy = dy;
 		this.pressure = pressure;
 		this.device = device;
+		this.timestamp = timestamp;
 	}
 
 	public function clone():TouchEventInfo
 	{
-		return new TouchEventInfo(type, x, y, id, dx, dy, pressure, device);
+		return new TouchEventInfo(type, x, y, id, dx, dy, pressure, device, timestamp);
 	}
 }
 

@@ -581,6 +581,10 @@ namespace lime {
 
 			keyEvent.keyCode = event->key.keysym.sym;
 			keyEvent.modifier = event->key.keysym.mod;
+			// Legacy SDL2 backend: SDL_KeyboardEvent.timestamp counts milliseconds since
+			// SDL_Init, while System::GetTimer() there is the performance counter. The two
+			// domains do not line up, so report "unknown" (0) instead of a wrong offset.
+			keyEvent.timestamp = 0;
 			keyEvent.windowID = event->key.windowID;
 
 			if (keyEvent.type == KEY_DOWN) {
@@ -757,6 +761,10 @@ namespace lime {
 			touchEvent.dy = event->tfinger.dy;
 			touchEvent.pressure = event->tfinger.pressure;
 			touchEvent.device = event->tfinger.touchId;
+			// Legacy SDL2 backend: SDL_TouchFingerEvent carries no timestamp, and
+			// System::GetTimer() is the performance counter there, so the domains do not
+			// line up. Report "unknown" (0) instead of a wrong offset.
+			touchEvent.timestamp = 0;
 
 			TouchEvent::Dispatch (&touchEvent);
 

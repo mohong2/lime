@@ -24,6 +24,7 @@
 #include "emscripten.h"
 #endif
 
+
 #ifdef ANDROID
 #include <sys/system_properties.h>
 #endif
@@ -933,6 +934,7 @@ namespace lime {
 			keyEvent.keyCode = event->key.key;
 			keyEvent.modifier = event->key.mod;
 			keyEvent.windowID = event->key.windowID;
+			keyEvent.timestamp = (double)event->key.timestamp;
 
 			if (keyEvent.type == KEY_DOWN) {
 
@@ -1111,6 +1113,10 @@ namespace lime {
 			touchEvent.dy = event->tfinger.dy;
 			touchEvent.pressure = event->tfinger.pressure;
 			touchEvent.device = event->tfinger.touchID;
+			// SeiunEngine: the finger event's own stamp (ns on the SDL_GetTicksNS clock, the
+			// same one System::GetTimer() reports), so a touch can be judged at the moment
+			// the finger landed instead of the logic step that noticed it.
+			touchEvent.timestamp = (double)event->tfinger.timestamp;
 
 			TouchEvent::Dispatch (&touchEvent);
 

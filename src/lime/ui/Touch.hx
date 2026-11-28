@@ -18,6 +18,11 @@ class Touch
 	public var dy:Float;
 	public var id:Int;
 	public var pressure:Float;
+	/**
+		Nanosecond stamp of the finger event itself (SDL_GetTicksNS domain, the same clock
+		`lime.system.System.getTimer` reports), 0 when the backend has none.
+	**/
+	public var timestamp:Float = 0;
 	public var x:Float;
 	public var y:Float;
 

@@ -152,6 +152,28 @@ namespace lime {
 	}
 
 
+	// The opposite direction, for testing: mirror mouse input as finger events so a
+	// desktop with no touchscreen can drive the whole native touch pipeline
+	// (SDL_EVENT_FINGER_* -> lime TouchEvent.timestamp -> OpenFL
+	// TouchEvent.inputTimestampNs -> FlxTouch -> FlxButton). Off unless asked for:
+	//
+	//   SEIUN_TOUCH_PROBE=1 (any platform, before launch)
+	static const char* SeiunMouseTouchEventsHint () {
+
+		static int resolved = -1;
+
+		if (resolved < 0) {
+
+			SeiunLeverCached ("SEIUN_TOUCH_PROBE", "debug.seiun.touch_probe", &resolved,
+				"[SEIUN] mouse->touch synthesis enabled (touch probe)");
+
+		}
+
+		return resolved ? "1" : "0";
+
+	}
+
+
 	static Cursor currentCursor = DEFAULT;
 
 	SDL_Cursor* SDLCursor::arrowCursor = 0;
@@ -220,7 +242,10 @@ namespace lime {
 		#if !defined(EMSCRIPTEN) && !defined(LIME_SWITCH)
 		SDL_SetHint (SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "0");
 		SDL_SetHint (SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
-		SDL_SetHint (SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
+		// SeiunEngine: normally 0, because the game reads touches itself and a mirrored
+		// finger event would double every press. SeiunMouseTouchEventsHint() turns it on
+		// only for the touch probe.
+		SDL_SetHint (SDL_HINT_MOUSE_TOUCH_EVENTS, SeiunMouseTouchEventsHint ());
 		// SeiunEngine: "1" (SDL's default) makes every touch arrive twice, once
 		// as a touch event and once as a synthesized mouse event. See
 		// SeiunTouchMouseEventsHint() above for the opt-in switch.

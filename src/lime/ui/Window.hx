@@ -94,6 +94,21 @@ class Window
 	public var x(get, set):Int;
 	public var y(get, set):Int;
 
+	/**
+		When the platform reports the moment a key event happened, this holds that moment
+		(nanoseconds, the same clock as `lime.system.System.getTimer`), published just
+		before `onKeyDown` / `onKeyUp` dispatch and reset to 0 right after.
+
+		`onKeyDown.dispatch` only carries the key and its modifiers, so an event object
+		cannot carry this without changing that signature. A listener that needs the real
+		press time reads this field from inside its handler: the dispatch is synchronous,
+		so the value belongs to the event being handled.
+
+		0 means the backend has no timestamp for this event (legacy SDL, HTML5, synthetic
+		events), which is the case to code against, not an error.
+	**/
+	public static var keyEventTimestampNs:Float = 0;
+
 	@:noCompletion private var __attributes:WindowAttributes;
 	@:noCompletion private var __backend:WindowBackend;
 	@:noCompletion private var __borderless:Bool;
