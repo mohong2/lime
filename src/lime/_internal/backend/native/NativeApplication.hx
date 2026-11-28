@@ -359,6 +359,7 @@ class NativeApplication
 		for (window in parent.__windows)
 		{
 			if (window == null) continue;
+			if (window.hidden) continue;
 
 			// parent.renderer = renderer;
 
