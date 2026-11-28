@@ -961,8 +961,8 @@ namespace lime {
 
 	int SDLWindow::GetX () {
 
-		int x;
-		int y;
+		int x = 0;
+		int y = 0;
 
 		SDL_GetWindowPosition (sdlWindow, &x, &y);
 
@@ -973,8 +973,8 @@ namespace lime {
 
 	int SDLWindow::GetY () {
 
-		int x;
-		int y;
+		int x = 0;
+		int y = 0;
 
 		SDL_GetWindowPosition (sdlWindow, &x, &y);
 
