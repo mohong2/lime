@@ -481,20 +481,28 @@ namespace lime {
 
 		#endif
 
+		if (sdlRenderer) {
+
+			SDL_DestroyRenderer (sdlRenderer);
+			sdlRenderer = 0;
+
+		} else if (context) {
+
+			if (SDL_GL_GetCurrentContext () == context) {
+
+				SDL_GL_MakeCurrent (sdlWindow, NULL);
+
+			}
+
+			SDL_GL_DestroyContext (context);
+			context = 0;
+
+		}
+
 		if (sdlWindow) {
 
 			SDL_DestroyWindow (sdlWindow);
 			sdlWindow = 0;
-
-		}
-
-		if (sdlRenderer) {
-
-			SDL_DestroyRenderer (sdlRenderer);
-
-		} else if (context) {
-
-			SDL_GL_DestroyContext (context);
 
 		}
 
@@ -598,6 +606,24 @@ namespace lime {
 	void SDLWindow::Close () {
 
 		if (sdlWindow) {
+
+			if (sdlRenderer) {
+
+				SDL_DestroyRenderer (sdlRenderer);
+				sdlRenderer = 0;
+
+			} else if (context) {
+
+				if (SDL_GL_GetCurrentContext () == context) {
+
+					SDL_GL_MakeCurrent (sdlWindow, NULL);
+
+				}
+
+				SDL_GL_DestroyContext (context);
+				context = 0;
+
+			}
 
 			SDL_DestroyWindow (sdlWindow);
 			sdlWindow = 0;
