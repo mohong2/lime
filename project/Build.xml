@@ -207,6 +207,7 @@
 
 			<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/openal/include/" unless="LIME_MOJOAL || emscripten" />
 			<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/mojoal/" if="LIME_MOJOAL" />
+			<compilerflag value="-I${NATIVE_TOOLKIT_PATH}/drmp3/" />
 			<compilerflag value="-DLIME_OPENAL" />
 			<compilerflag value="-DLIME_OPENALSOFT" if="LIME_OPENALSOFT" />
 			<compilerflag value="-DLIME_MOJOAL" if="LIME_MOJOAL" />
@@ -214,6 +215,11 @@
 			<compilerflag value="-DAL_ALEXT_PROTOTYPES" if="LIME_OPENALSOFT" />
 
 			<file name="src/media/openal/OpenALBindings.cpp" />
+
+			<!-- SeiunEngine: pull-decoded streaming (Ogg Vorbis + MP3) with an
+			     OpenAL ring owned by a feeder thread. See src/media/StreamSource.cpp. -->
+			<file name="src/media/StreamDecoder.cpp" />
+			<file name="src/media/StreamSource.cpp" />
 
 		</section>
 

@@ -1,5 +1,6 @@
 package lime.media;
 
+import haxe.Int64;
 import haxe.io.Bytes;
 import haxe.io.Path;
 import lime._internal.backend.native.NativeCFFI;
@@ -39,12 +40,26 @@ class AudioBuffer
 	public var sampleRate:Int;
 	public var src(get, set):Dynamic;
 
+	/**
+	 * Playback duration in milliseconds. Native PCM buffers use their byte
+	 * count, Vorbis file buffers use the decoder's frame count, and streamed
+	 * buffers use the frame count reported by the probe. This is the single
+	 * source of truth OpenFL's `Sound.length` reads.
+	 */
+	public var duration(get, never):Int;
+
 	@:noCompletion private var __srcAudio:#if (js && html5) Audio #else Dynamic #end;
 	@:noCompletion private var __srcBuffer:#if lime_cffi ALBuffer #else Dynamic #end;
 	@:noCompletion private var __srcCustom:Dynamic;
 	@:noCompletion private var __srcHowl:#if lime_howlerjs Howl #else Dynamic #end;
 	@:noCompletion private var __srcSound:#if flash Sound #else Dynamic #end;
 	@:noCompletion private var __srcVorbisFile:#if lime_vorbis VorbisFile #else Dynamic #end;
+
+	// Streaming descriptor: when either field is set, the buffer holds no PCM.
+	// Every AudioSource creates its own native decoder over the file/bytes.
+	@:noCompletion public var __streamPath:String;
+	@:noCompletion public var __streamBytes:Bytes;
+	@:noCompletion public var __streamTotalSamples:Int;
 
 	#if commonjs
 	private static function __init__()
@@ -69,6 +84,9 @@ class AudioBuffer
 		__srcVorbisFile = null;
 		__srcSound = null;
 		__srcCustom = null;
+		__streamPath = null;
+		__streamBytes = null;
+		__streamTotalSamples = 0;
 	}
 
 	/**
@@ -83,6 +101,57 @@ class AudioBuffer
 	{
 		data = null;
 		__srcVorbisFile = null;
+	}
+
+	/**
+	 * Creates a streaming buffer for an Ogg Vorbis or MP3 file.
+	 *
+	 * Only the format headers are read here; the decoded PCM never becomes
+	 * resident. Each AudioSource made from the returned buffer opens its own
+	 * decoder on a native feeder thread and keeps a small OpenAL ring filled.
+	 * Returns null when the file is not streamable, so callers can fall back
+	 * to `fromFile` (full decode).
+	 */
+	public static function fromStreamFile(path:String):AudioBuffer
+	{
+		#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+		if (path == null || path.length == 0) return null;
+
+		var audioBuffer = new AudioBuffer();
+		audioBuffer.bitsPerSample = 16;
+
+		var result = NativeCFFI.lime_stream_probe_file(path, audioBuffer);
+
+		if (result == null) return null;
+
+		audioBuffer.__streamPath = path;
+		return audioBuffer;
+		#else
+		return null;
+		#end
+	}
+
+	/**
+	 * Streaming variant of `fromBytes`. The compressed bytes stay owned by the
+	 * AudioBuffer while at least one AudioSource is alive.
+	 */
+	public static function fromStreamBytes(bytes:Bytes):AudioBuffer
+	{
+		#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+		if (bytes == null || bytes.length == 0) return null;
+
+		var audioBuffer = new AudioBuffer();
+		audioBuffer.bitsPerSample = 16;
+
+		var result = NativeCFFI.lime_stream_probe_bytes(bytes, audioBuffer);
+
+		if (result == null) return null;
+
+		audioBuffer.__streamBytes = bytes;
+		return audioBuffer;
+		#else
+		return null;
+		#end
 	}
 
 	public static function fromBase64(base64String:String):AudioBuffer
@@ -383,6 +452,29 @@ class AudioBuffer
 	}
 
 	// Get & Set Methods
+	@:noCompletion private function get_duration():Int
+	{
+		if (__streamTotalSamples > 0 && sampleRate > 0)
+		{
+			return Std.int(__streamTotalSamples / sampleRate * 1000);
+		}
+
+		if (data != null && channels > 0 && bitsPerSample > 0)
+		{
+			var samples = (data.length * 8) / (channels * bitsPerSample);
+			if (sampleRate > 0) return Std.int(samples / sampleRate * 1000);
+		}
+
+		#if lime_vorbis
+		if (__srcVorbisFile != null && sampleRate > 0)
+		{
+			return Std.int(Int64.toInt(__srcVorbisFile.pcmTotal()) / sampleRate * 1000);
+		}
+		#end
+
+		return 0;
+	}
+
 	@:noCompletion private function get_src():Dynamic
 	{
 		#if (js && html5)

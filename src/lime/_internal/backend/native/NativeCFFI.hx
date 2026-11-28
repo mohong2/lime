@@ -75,6 +75,45 @@ class NativeCFFI
 
 	@:cffi private static function lime_audio_load_file(path:Dynamic, buffer:Dynamic):Dynamic;
 
+	// Native streaming audio (project/src/media/StreamSource.cpp). The probe
+	// fills channels/sampleRate/__streamTotalSamples on a buffer that owns no
+	// PCM; the source functions then decode on a feeder thread.
+	@:cffi private static function lime_stream_probe_file(path:Dynamic, buffer:Dynamic):Dynamic;
+
+	@:cffi private static function lime_stream_probe_bytes(data:Dynamic, buffer:Dynamic):Dynamic;
+
+	@:cffi private static function lime_stream_source_create_file(path:Dynamic):Int;
+
+	@:cffi private static function lime_stream_source_create_bytes(data:Dynamic):Int;
+
+	@:cffi private static function lime_stream_source_destroy(handle:Int):Void;
+
+	@:cffi private static function lime_stream_source_play(handle:Int):Void;
+
+	@:cffi private static function lime_stream_source_pause(handle:Int):Void;
+
+	@:cffi private static function lime_stream_source_stop(handle:Int):Void;
+
+	@:cffi private static function lime_stream_source_seek(handle:Int, fileMs:Float):Void;
+
+	@:cffi private static function lime_stream_source_set_loops(handle:Int, loops:Float):Void;
+
+	@:cffi private static function lime_stream_source_set_pitch(handle:Int, pitch:Float):Void;
+
+	@:cffi private static function lime_stream_source_set_gain(handle:Int, gain:Float):Void;
+
+	@:cffi private static function lime_stream_source_set_position(handle:Int, x:Float, y:Float, z:Float):Void;
+
+	@:cffi private static function lime_stream_source_get_time(handle:Int):Float;
+
+	@:cffi private static function lime_stream_source_get_state(handle:Int):Int;
+
+	@:cffi private static function lime_stream_source_get_pitch(handle:Int):Float;
+
+	@:cffi private static function lime_stream_source_get_gain(handle:Int):Float;
+
+	@:cffi private static function lime_stream_source_get_position(handle:Int, out:Dynamic):Dynamic;
+
 	@:cffi private static function lime_bytes_from_data_pointer(data:Float, length:Int, bytes:Dynamic):Dynamic;
 
 	@:cffi private static function lime_bytes_get_data_pointer(data:Dynamic):Float;
@@ -367,6 +406,40 @@ class NativeCFFI
 		"ooo", false));
 	private static var lime_audio_load_file = new cpp.Callable<cpp.Object->cpp.Object->cpp.Object>(cpp.Prime._loadPrime("lime", "lime_audio_load_file", "ooo",
 		false));
+	private static var lime_stream_probe_file = new cpp.Callable<cpp.Object->cpp.Object->cpp.Object>(cpp.Prime._loadPrime("lime",
+		"lime_stream_probe_file", "ooo", false));
+	private static var lime_stream_probe_bytes = new cpp.Callable<cpp.Object->cpp.Object->cpp.Object>(cpp.Prime._loadPrime("lime",
+		"lime_stream_probe_bytes", "ooo", false));
+	private static var lime_stream_source_create_file = new cpp.Callable<cpp.Object->Int>(cpp.Prime._loadPrime("lime",
+		"lime_stream_source_create_file", "oi", false));
+	private static var lime_stream_source_create_bytes = new cpp.Callable<cpp.Object->Int>(cpp.Prime._loadPrime("lime",
+		"lime_stream_source_create_bytes", "oi", false));
+	private static var lime_stream_source_destroy = new cpp.Callable<Int->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_stream_source_destroy", "iv",
+		false));
+	private static var lime_stream_source_play = new cpp.Callable<Int->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_stream_source_play", "iv", false));
+	private static var lime_stream_source_pause = new cpp.Callable<Int->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_stream_source_pause", "iv",
+		false));
+	private static var lime_stream_source_stop = new cpp.Callable<Int->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_stream_source_stop", "iv", false));
+	private static var lime_stream_source_seek = new cpp.Callable<Int->Float->cpp.Void>(cpp.Prime._loadPrime("lime", "lime_stream_source_seek", "idv",
+		false));
+	private static var lime_stream_source_set_loops = new cpp.Callable<Int->Float->cpp.Void>(cpp.Prime._loadPrime("lime",
+		"lime_stream_source_set_loops", "idv", false));
+	private static var lime_stream_source_set_pitch = new cpp.Callable<Int->Float->cpp.Void>(cpp.Prime._loadPrime("lime",
+		"lime_stream_source_set_pitch", "idv", false));
+	private static var lime_stream_source_set_gain = new cpp.Callable<Int->Float->cpp.Void>(cpp.Prime._loadPrime("lime",
+		"lime_stream_source_set_gain", "idv", false));
+	private static var lime_stream_source_set_position = new cpp.Callable<Int->Float->Float->Float->cpp.Void>(cpp.Prime._loadPrime("lime",
+		"lime_stream_source_set_position", "idddv", false));
+	private static var lime_stream_source_get_time = new cpp.Callable<Int->Float>(cpp.Prime._loadPrime("lime", "lime_stream_source_get_time", "id",
+		false));
+	private static var lime_stream_source_get_state = new cpp.Callable<Int->Int>(cpp.Prime._loadPrime("lime", "lime_stream_source_get_state", "ii",
+		false));
+	private static var lime_stream_source_get_pitch = new cpp.Callable<Int->Float>(cpp.Prime._loadPrime("lime", "lime_stream_source_get_pitch", "id",
+		false));
+	private static var lime_stream_source_get_gain = new cpp.Callable<Int->Float>(cpp.Prime._loadPrime("lime", "lime_stream_source_get_gain", "id",
+		false));
+	private static var lime_stream_source_get_position = new cpp.Callable<Int->cpp.Object->cpp.Object>(cpp.Prime._loadPrime("lime",
+		"lime_stream_source_get_position", "ioo", false));
 	private static var lime_bytes_from_data_pointer = new cpp.Callable<Float->Int->cpp.Object->cpp.Object>(cpp.Prime._loadPrime("lime",
 		"lime_bytes_from_data_pointer", "dioo", false));
 	private static var lime_bytes_get_data_pointer = new cpp.Callable<cpp.Object->Float>(cpp.Prime._loadPrime("lime", "lime_bytes_get_data_pointer", "od",
@@ -620,6 +693,24 @@ class NativeCFFI
 	private static var lime_audio_load = CFFI.load("lime", "lime_audio_load", 2);
 	private static var lime_audio_load_bytes = CFFI.load("lime", "lime_audio_load_bytes", 2);
 	private static var lime_audio_load_file = CFFI.load("lime", "lime_audio_load_file", 2);
+	private static var lime_stream_probe_file = CFFI.load("lime", "lime_stream_probe_file", 2);
+	private static var lime_stream_probe_bytes = CFFI.load("lime", "lime_stream_probe_bytes", 2);
+	private static var lime_stream_source_create_file = CFFI.load("lime", "lime_stream_source_create_file", 1);
+	private static var lime_stream_source_create_bytes = CFFI.load("lime", "lime_stream_source_create_bytes", 1);
+	private static var lime_stream_source_destroy = CFFI.load("lime", "lime_stream_source_destroy", 1);
+	private static var lime_stream_source_play = CFFI.load("lime", "lime_stream_source_play", 1);
+	private static var lime_stream_source_pause = CFFI.load("lime", "lime_stream_source_pause", 1);
+	private static var lime_stream_source_stop = CFFI.load("lime", "lime_stream_source_stop", 1);
+	private static var lime_stream_source_seek = CFFI.load("lime", "lime_stream_source_seek", 2);
+	private static var lime_stream_source_set_loops = CFFI.load("lime", "lime_stream_source_set_loops", 2);
+	private static var lime_stream_source_set_pitch = CFFI.load("lime", "lime_stream_source_set_pitch", 2);
+	private static var lime_stream_source_set_gain = CFFI.load("lime", "lime_stream_source_set_gain", 2);
+	private static var lime_stream_source_set_position = CFFI.load("lime", "lime_stream_source_set_position", 4);
+	private static var lime_stream_source_get_time = CFFI.load("lime", "lime_stream_source_get_time", 1);
+	private static var lime_stream_source_get_state = CFFI.load("lime", "lime_stream_source_get_state", 1);
+	private static var lime_stream_source_get_pitch = CFFI.load("lime", "lime_stream_source_get_pitch", 1);
+	private static var lime_stream_source_get_gain = CFFI.load("lime", "lime_stream_source_get_gain", 1);
+	private static var lime_stream_source_get_position = CFFI.load("lime", "lime_stream_source_get_position", 2);
 	private static var lime_bytes_from_data_pointer = CFFI.load("lime", "lime_bytes_from_data_pointer", 3);
 	private static var lime_bytes_get_data_pointer = CFFI.load("lime", "lime_bytes_get_data_pointer", 1);
 	private static var lime_bytes_get_data_pointer_offset = CFFI.load("lime", "lime_bytes_get_data_pointer_offset", 2);

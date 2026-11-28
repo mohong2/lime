@@ -16,6 +16,7 @@ import lime.utils.UInt8Array;
 @:noDebug
 #end
 @:access(lime.media.AudioBuffer)
+@:access(lime._internal.backend.native.NativeCFFI)
 class NativeAudioSource
 {
 	private static var STREAM_BUFFER_SIZE = 48000;
@@ -25,6 +26,9 @@ class NativeAudioSource
 	private static var STREAM_NUM_BUFFERS = 3;
 	#end
 	private static var STREAM_TIMER_FREQUENCY = 100;
+
+	// Values reported by the native streaming source (StreamSource.cpp).
+	private static inline var NATIVE_STREAM_FINISHED = 3;
 
 	private var buffers:Array<ALBuffer>;
 	private var bufferTimeBlocks:Array<Float>;
@@ -42,6 +46,14 @@ class NativeAudioSource
 	private var streamTimer:Timer;
 	private var timer:Timer;
 
+	// Native streaming source. When >= 0 no OpenAL source is owned by this
+	// Haxe object: the ndll decodes on a feeder thread and drives its own AL
+	// source. All controls below are proxied to it.
+	private var streamHandle:Int = -1;
+	private var streamStarted:Bool = false;
+	private var streamStopped:Bool = false;
+	private var streamPollTimer:Timer;
+
 	public function new(parent:AudioSource)
 	{
 		this.parent = parent;
@@ -51,6 +63,17 @@ class NativeAudioSource
 
 	public function dispose():Void
 	{
+		if (streamHandle >= 0)
+		{
+			#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+			stopStreamPoll();
+			NativeCFFI.lime_stream_source_destroy(streamHandle);
+			#end
+			streamHandle = -1;
+			playing = false;
+			return;
+		}
+
 		if (handle != null)
 		{
 			stop();
@@ -70,6 +93,40 @@ class NativeAudioSource
 
 	public function init():Void
 	{
+		#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+		if (parent.buffer != null && (parent.buffer.__streamPath != null || parent.buffer.__streamBytes != null))
+		{
+			var handle = -1;
+
+			if (parent.buffer.__streamPath != null)
+			{
+				handle = NativeCFFI.lime_stream_source_create_file(parent.buffer.__streamPath);
+			}
+			else
+			{
+				handle = NativeCFFI.lime_stream_source_create_bytes(parent.buffer.__streamBytes);
+			}
+
+			if (handle >= 0)
+			{
+				streamHandle = handle;
+				streamStarted = false;
+				streamStopped = false;
+				completed = false;
+				samples = parent.buffer.__streamTotalSamples;
+
+				// AudioSource applies the constructor arguments before init().
+				NativeCFFI.lime_stream_source_set_loops(handle, loops);
+
+				return;
+			}
+
+			// The native source could not be created (out of OpenAL buffers,
+			// unreadable file). Keep the reported length honest and stay inert.
+			samples = parent.buffer.__streamTotalSamples;
+		}
+		#end
+
 		dataLength = 0;
 		format = 0;
 
@@ -116,6 +173,14 @@ class NativeAudioSource
 		}
 		else
 		{
+			if (parent.buffer.data == null)
+			{
+				// Streaming descriptor whose native source could not be
+				// created (for example, OpenAL ran out of buffers). Stay inert
+				// instead of dereferencing a null PCM array.
+				return;
+			}
+
 			if (parent.buffer.__srcBuffer == null)
 			{
 				parent.buffer.__srcBuffer = AL.createBuffer();
@@ -141,6 +206,29 @@ class NativeAudioSource
 
 	public function play():Void
 	{
+		if (streamHandle >= 0)
+		{
+			#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+			if (playing) return;
+
+			playing = true;
+
+			if (!streamStarted || completed || streamStopped)
+			{
+				// Start at AudioSource.offset (the Sound.play start time).
+				NativeCFFI.lime_stream_source_seek(streamHandle, parent.offset);
+			}
+
+			streamStarted = true;
+			streamStopped = false;
+			completed = false;
+
+			NativeCFFI.lime_stream_source_play(streamHandle);
+			startStreamPoll();
+			#end
+			return;
+		}
+
 		/*var pitch:Float = AL.getSourcef (handle, AL.PITCH);
 			trace(pitch);
 			AL.sourcef (handle, AL.PITCH, pitch*0.9);
@@ -194,6 +282,15 @@ class NativeAudioSource
 	public function pause():Void
 	{
 		playing = false;
+
+		if (streamHandle >= 0)
+		{
+			#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+			stopStreamPoll();
+			NativeCFFI.lime_stream_source_pause(streamHandle);
+			#end
+			return;
+		}
 
 		if (handle == null) return;
 		AL.sourcePause(handle);
@@ -315,6 +412,18 @@ class NativeAudioSource
 
 	public function stop():Void
 	{
+		if (streamHandle >= 0)
+		{
+			#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+			playing = false;
+			completed = false;
+			streamStopped = true;
+			stopStreamPoll();
+			NativeCFFI.lime_stream_source_stop(streamHandle);
+			#end
+			return;
+		}
+
 		if (playing && handle != null && AL.getSourcei(handle, AL.SOURCE_STATE) == AL.PLAYING)
 		{
 			AL.sourceStop(handle);
@@ -360,9 +469,58 @@ class NativeAudioSource
 		parent.onComplete.dispatch();
 	}
 
+	private function startStreamPoll():Void
+	{
+		#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+		stopStreamPoll();
+
+		var handle = streamHandle;
+
+		streamPollTimer = new Timer(25);
+		streamPollTimer.run = function()
+		{
+			if (streamHandle < 0 || handle != streamHandle)
+			{
+				stopStreamPoll();
+				return;
+			}
+
+			if (NativeCFFI.lime_stream_source_get_state(handle) == NATIVE_STREAM_FINISHED)
+			{
+				playing = false;
+				completed = true;
+				stopStreamPoll();
+				parent.onComplete.dispatch();
+			}
+		};
+		#end
+	}
+
+	private function stopStreamPoll():Void
+	{
+		if (streamPollTimer != null)
+		{
+			streamPollTimer.stop();
+			streamPollTimer = null;
+		}
+	}
+
 	// Get & Set Methods
 	public function getCurrentTime():Int
 	{
+		if (streamHandle >= 0)
+		{
+			#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+			if (completed) return getLength();
+
+			var time = Std.int(NativeCFFI.lime_stream_source_get_time(streamHandle)) - parent.offset;
+			if (time < 0) return 0;
+			return time;
+			#else
+			return 0;
+			#end
+		}
+
 		if (completed)
 		{
 			return getLength();
@@ -394,6 +552,18 @@ class NativeAudioSource
 
 	public function setCurrentTime(value:Int):Int
 	{
+		if (streamHandle >= 0)
+		{
+			#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+			// Asynchronous on the native side; time queries report the seek
+			// target until the feeder thread has applied it.
+			NativeCFFI.lime_stream_source_seek(streamHandle, value + parent.offset);
+			completed = false;
+			streamStopped = false;
+			#end
+			return value;
+		}
+
 		// `setCurrentTime()` has side effects and is never safe to skip.
 		/* if (value == getCurrentTime())
 		{
@@ -459,6 +629,15 @@ class NativeAudioSource
 
 	public function getGain():Float
 	{
+		if (streamHandle >= 0)
+		{
+			#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+			return NativeCFFI.lime_stream_source_get_gain(streamHandle);
+			#else
+			return 1;
+			#end
+		}
+
 		if (handle != null)
 		{
 			return AL.getSourcef(handle, AL.GAIN);
@@ -471,6 +650,14 @@ class NativeAudioSource
 
 	public function setGain(value:Float):Float
 	{
+		if (streamHandle >= 0)
+		{
+			#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+			NativeCFFI.lime_stream_source_set_gain(streamHandle, value);
+			#end
+			return value;
+		}
+
 		if (handle != null)
 		{
 			AL.sourcef(handle, AL.GAIN, value);
@@ -486,11 +673,23 @@ class NativeAudioSource
 			return length;
 		}
 
+		if (streamHandle >= 0 && parent.buffer != null && parent.buffer.__streamTotalSamples > 0 && parent.buffer.sampleRate > 0)
+		{
+			return Std.int(parent.buffer.__streamTotalSamples / parent.buffer.sampleRate * 1000) - parent.offset;
+		}
+
 		return Std.int(samples / parent.buffer.sampleRate * 1000) - parent.offset;
 	}
 
 	public function setLength(value:Int):Int
 	{
+		if (streamHandle >= 0)
+		{
+			// Trimming is reported through FlxSound.endTime; the native source
+			// always plays to the real end of the file.
+			return length = value;
+		}
+
 		if (playing && length != value)
 		{
 			if (timer != null)
@@ -517,11 +716,27 @@ class NativeAudioSource
 
 	public function setLoops(value:Int):Int
 	{
+		if (streamHandle >= 0)
+		{
+			#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+			NativeCFFI.lime_stream_source_set_loops(streamHandle, value);
+			#end
+		}
+
 		return loops = value;
 	}
 
 	public function getPitch():Float
 	{
+		if (streamHandle >= 0)
+		{
+			#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+			return NativeCFFI.lime_stream_source_get_pitch(streamHandle);
+			#else
+			return 1;
+			#end
+		}
+
 		if (handle != null)
 		{
 			return AL.getSourcef(handle, AL.PITCH);
@@ -534,6 +749,14 @@ class NativeAudioSource
 
 	public function setPitch(value:Float):Float
 	{
+		if (streamHandle >= 0)
+		{
+			#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+			NativeCFFI.lime_stream_source_set_pitch(streamHandle, value);
+			#end
+			return value;
+		}
+
 		if (playing && value != getPitch())
 		{
 			if (timer != null)
@@ -560,6 +783,18 @@ class NativeAudioSource
 
 	public function getPosition():Vector4
 	{
+		if (streamHandle >= 0)
+		{
+			#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+			var out = {x: 0.0, y: 0.0, z: 0.0};
+			NativeCFFI.lime_stream_source_get_position(streamHandle, out);
+			position.x = out.x;
+			position.y = out.y;
+			position.z = out.z;
+			#end
+			return position;
+		}
+
 		if (handle != null)
 		{
 			#if !emscripten
@@ -579,6 +814,14 @@ class NativeAudioSource
 		position.y = value.y;
 		position.z = value.z;
 		position.w = value.w;
+
+		if (streamHandle >= 0)
+		{
+			#if (cpp && lime_cffi && !macro && !emscripten && !hl)
+			NativeCFFI.lime_stream_source_set_position(streamHandle, position.x, position.y, position.z);
+			#end
+			return position;
+		}
 
 		if (handle != null)
 		{
